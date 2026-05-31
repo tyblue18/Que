@@ -21,6 +21,7 @@ model AppUser {
   status          String?   // short status message
   statusExpiresAt DateTime? // null = indefinite; set = expires at this time
   showcaseBadges  Json?     // string[] of badge slugs, ordered, max 8
+  leaderboardOptIn Boolean  @default(false) // appear on the global/seasonal leaderboard
 
   // Social
   sentRequests   Friendship[] @relation("FriendRequester")

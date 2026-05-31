@@ -910,6 +910,11 @@ export default function WorkoutLogger() {
   } = useApp();
 
   const [exercises, setExercisesRaw] = useState<ExerciseEntry[]>([]);
+  // Always-fresh mirror of `exercises` so callbacks invoked from outside React's
+  // render cycle (e.g. the global rest-timer's "Log set") read current state
+  // instead of a stale closure.
+  const exercisesRef = useRef<ExerciseEntry[]>([]);
+  exercisesRef.current = exercises;
   const [notes, setNotesRaw] = useState('');
   const [selectedEx,    setSelectedEx]    = useState('');
   const [isCustomEx,    setIsCustomEx]    = useState(false);
@@ -1237,18 +1242,24 @@ export default function WorkoutLogger() {
   const u = useUnits();
 
   // Quick-log a set from the rest bar straight into the exercise the timer
-  // belongs to (matched by stable key). Reuses setExercises so persistence +
-  // PR recompute + badge popups all fire; the context restarts the rest clock.
-  const logRestSet = useCallback((exKey: string, reps: string, weight: string) => {
-    const idx = exerciseKeysRef.current.indexOf(exKey);
-    if (idx < 0) return;
-    setExercises(exercises.map((e, i) => {
-      if (i !== idx || e.k !== 'lift') return e;
+  // belongs to. Targets by stable key, falling back to the exercise's index if
+  // the key was regenerated (a sync/day-reload can renumber keys). Reads the
+  // live exercises via a ref so it can't clobber state with a stale snapshot.
+  // Reuses setExercises so persistence + PR recompute + badge popups fire; the
+  // context restarts the rest clock. Stable identity (refs only) → the handler
+  // registration below never goes stale.
+  const logRestSet = useCallback((exKey: string, exIndex: number, reps: string, weight: string) => {
+    const curr = exercisesRef.current;
+    let idx = exerciseKeysRef.current.indexOf(exKey);
+    if (idx < 0 || curr[idx]?.k !== 'lift') idx = exIndex;      // key drifted → use position
+    if (idx < 0 || curr[idx]?.k !== 'lift') return;             // target gone (deleted) → no-op
+    setExercises(curr.map((e, i) => {
+      if (i !== idx) return e;
       const sets = Array.isArray(e.sets) && e.sets.length ? [...e.sets] : normalizeSets(e);
       sets.push({ r: reps || '1', w: weight });
       return { ...e, sets };
     }));
-  }, [exercises, setExercises]);
+  }, [setExercises]);
 
   // Register the appender for the day we're showing, so the global bar's "Log
   // set" delegates here (full PR/badge logic) while we're mounted on this day.

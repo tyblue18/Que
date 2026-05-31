@@ -10,6 +10,7 @@ import dynamic                                       from 'next/dynamic';
 import ProfileCard, { type PublicProfile }           from '@/components/ProfileCard';
 import { InviteFriends }                              from '@/components/social/InviteFriends';
 import { BeatLastWeek }                                from '@/components/social/BeatLastWeek';
+import { GlobalLeaderboard }                            from '@/components/social/GlobalLeaderboard';
 import { Groups }                                     from '@/components/social/Groups';
 import { TeamBattles }                               from '@/components/social/TeamBattles';
 import {
@@ -1423,6 +1424,9 @@ export default function SocialTab() {
 
       {/* ── BEAT LAST WEEK (solo competitive on-ramp — no friends required) ──── */}
       <BeatLastWeek />
+
+      {/* ── GLOBAL LEADERBOARD (weekly seasonal, opt-in — no friends required) ── */}
+      <GlobalLeaderboard onOptInChange={refresh} />
 
       {/* ── GROUPS (community hub — feeds + team battles entry) ──────────────── */}
       {hasUsername && ownProfile?.id && (

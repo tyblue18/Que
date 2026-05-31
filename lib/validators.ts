@@ -70,10 +70,11 @@ export const challengeActionSchema = z.object({
 // ── /api/user PATCH ───────────────────────────────────────────────────────────
 
 export const userPatchSchema = z.object({
-  username:       z.string().min(3).max(20).optional(),
-  status:         z.string().max(60).nullable().optional(),
-  statusDuration: z.enum(['24h', 'forever', 'clear']).optional(),
-  showcaseBadges: z.array(z.string().max(100)).max(8).optional(),
+  username:         z.string().min(3).max(20).optional(),
+  status:           z.string().max(60).nullable().optional(),
+  statusDuration:   z.enum(['24h', 'forever', 'clear']).optional(),
+  showcaseBadges:   z.array(z.string().max(100)).max(8).optional(),
+  leaderboardOptIn: z.boolean().optional(),
 });
 
 // ── /api/invite/redeem POST ───────────────────────────────────────────────────

@@ -52,7 +52,7 @@ interface PersistShape {
   lastCommitAt: number | null;
 }
 
-type LogSetFn = (exKey: string, reps: string, weight: string) => void;
+type LogSetFn = (exKey: string, exIndex: number, reps: string, weight: string) => void;
 
 interface RestTimerCtx {
   /** Start (or restart) the rest timer — called by WorkoutLogger on commit. */
@@ -144,7 +144,7 @@ export function RestTimerProvider({ children }: { children: React.ReactNode }) {
     if (handler && handler.date === t.date) {
       // WorkoutLogger is mounted on this day — let it append so PR recompute
       // and lift-badge popups fire as they always have.
-      handler.fn(t.exKey, reps, weight);
+      handler.fn(t.exKey, t.exIndex, reps, weight);
     } else {
       // Not mounted here — append straight to the day record. The logger's
       // external-change detector reconciles it on remount.

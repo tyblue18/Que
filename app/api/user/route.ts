@@ -39,6 +39,7 @@ export async function GET(): Promise<NextResponse> {
     status:          statusActive ? user.status : null,
     statusExpiresAt: statusActive ? user.statusExpiresAt?.toISOString() ?? null : null,
     showcaseBadges:  (user.showcaseBadges as string[] | null) ?? [],
+    leaderboardOptIn: user.leaderboardOptIn,
     badges:          normalizeBadgeIcons(user.badges),
     badgeCount:      user.badges.length,
     profilePhoto:    (settings[PROFILE_PHOTO_KEY] as string | undefined) ?? null,
@@ -102,6 +103,11 @@ export async function PATCH(req: Request): Promise<NextResponse> {
       // Preserve user's chosen order; drop any slugs they don't own.
       update.showcaseBadges = requested.filter(s => ownedSet.has(s));
     }
+  }
+
+  // ── Leaderboard opt-in ──────────────────────────────────────────────────────
+  if (body.leaderboardOptIn !== undefined) {
+    update.leaderboardOptIn = body.leaderboardOptIn;
   }
 
   if (Object.keys(update).length === 0) {

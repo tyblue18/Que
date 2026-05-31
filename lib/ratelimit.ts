@@ -78,3 +78,11 @@ export const feedLimit = new Ratelimit({
   limiter: Ratelimit.slidingWindow(40, '1 m'),
   prefix:  'rl:feed',
 });
+
+// 30 leaderboard reads per user per minute. It's a cached read (10 min TTL), so
+// this only guards against a runaway client, not real load.
+export const leaderboardLimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(30, '1 m'),
+  prefix:  'rl:leaderboard',
+});
