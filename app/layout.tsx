@@ -67,8 +67,9 @@ export const viewport: Viewport = {
   themeColor: '#07080A',
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  // Removed maximumScale:1 / userScalable:false — these were blocking pinch-zoom
+  // for low-vision users without actually preventing zoom on iOS Safari (which
+  // has ignored user-scalable=no since iOS 10). WCAG 1.4.4 requires zoom support.
 };
 
 export default function RootLayout({

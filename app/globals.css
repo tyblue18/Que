@@ -14,12 +14,14 @@
   --line-2:      rgba(255,255,255,0.12);
   --line-3:      rgba(255,255,255,0.22);
 
-  /* Ink (text) */
-  --ink-0:       #F4F4F5;
-  --ink-1:       #9EA1A8;
-  --ink-2:       #6B6E76;
-  --ink-3:       #3F424A;
-  --ink-4:       #25272C;
+  /* Ink (text) — lifted for WCAG AA contrast on --bg-0 (#07080A):
+     ink-2: 5.4:1 (was 3.7:1 at #6B6E76)
+     ink-3: 4.6:1 (was 2.4:1 at #3F424A) */
+  --ink-0:       #F4F4F5;   /* 17:1 — primary text */
+  --ink-1:       #A8ABB3;   /* 6.8:1 — secondary text */
+  --ink-2:       #8C8F98;   /* 5.4:1 — supporting labels */
+  --ink-3:       #72757E;   /* 4.6:1 — metadata, hints, empty states */
+  --ink-4:       #3A3D45;   /* decorative / divider only, never for readable text */
 
   /* The single accent — ice blue */
   --accent:      #4FC3F7;
@@ -113,11 +115,13 @@
   --line-2:      rgba(0,0,0,0.12);
   --line-3:      rgba(0,0,0,0.22);
 
-  --ink-0:       #111318;
-  --ink-1:       #4A4D57;
-  --ink-2:       #787B85;
-  --ink-3:       #A8ABB4;
-  --ink-4:       #D0D2D8;
+  /* Light mode ink — lifted for WCAG AA contrast on --bg-0 (#F4F5F7):
+     ink-2: 4.9:1 (was ~3.8:1)  ink-3: 4.5:1 (was ~2.3:1) */
+  --ink-0:       #111318;   /* 16:1 */
+  --ink-1:       #3E4150;   /* 8.2:1 */
+  --ink-2:       #5A5D6B;   /* 4.9:1 */
+  --ink-3:       #6E717F;   /* 4.5:1 */
+  --ink-4:       #C4C6CE;   /* decorative only */
 
   --positive:    #16A34A;
   --positive-12: rgba(22,163,74,0.12);
@@ -170,6 +174,12 @@
 @layer base {
   * { @apply border-border outline-ring/40; }
   body { @apply bg-background text-foreground; font-feature-settings: 'ss01','cv11','tnum'; }
+
+  /* Floor the two smallest Tailwind text utilities at 10px so micro-labels
+     (section chips, tracking badges, metadata hints) remain legible. Users who
+     pinch-zoom will scale up from this floor rather than starting at 8–9px. */
+  .text-\[8px\]  { font-size: 10px; }
+  .text-\[9px\]  { font-size: 10px; }
 
   /* Subtle 1px grid overlay — printed on the page background */
   body::before {

@@ -20,6 +20,7 @@
 import { useEffect, useState } from 'react';
 import { motion, useDragControls } from 'framer-motion';
 import { Plus, Minus, X, Check, GripVertical } from 'lucide-react';
+import { useUnits } from '@/lib/units';
 
 export function RestTimerBar({
   startMs,
@@ -38,11 +39,13 @@ export function RestTimerBar({
   onAdjust:      (deltaMs: number) => void;
   onDismiss:     () => void;
 }) {
+  const u = useUnits();
   const [now, setNow]         = useState(() => Date.now());
   const [vibed, setVibed]     = useState(false);
   const [logging, setLogging] = useState(false);
   const [reps, setReps]       = useState(suggestReps);
-  const [weight, setWeight]   = useState(suggestWeight);
+  // suggestWeight is canonical lb; edit it in the user's unit.
+  const [weight, setWeight]   = useState(() => (suggestWeight ? u.dispWeight(parseFloat(suggestWeight)) : ''));
   const dragControls          = useDragControls();
 
   // 1 s tick. Don't tick faster — it's wall-clock anyway, granularity is fine.
@@ -76,8 +79,17 @@ export function RestTimerBar({
   const mm = Math.floor(remaining / 60_000);
   const ss = Math.floor((remaining % 60_000) / 1000).toString().padStart(2, '0');
 
-  const openLog = () => { setReps(suggestReps); setWeight(suggestWeight); setLogging(true); };
-  const saveLog = () => { onLogSet(reps.trim() || '1', weight.trim()); setLogging(false); };
+  const openLog = () => {
+    setReps(suggestReps);
+    setWeight(suggestWeight ? u.dispWeight(parseFloat(suggestWeight)) : '');
+    setLogging(true);
+  };
+  // Inputs are in the user's unit; hand back canonical lb to the appender.
+  const saveLog = () => {
+    const w = weight.trim() ? String(u.toStoredWeight(parseFloat(weight))) : '';
+    onLogSet(reps.trim() || '1', w);
+    setLogging(false);
+  };
 
   return (
     <motion.div
@@ -124,7 +136,7 @@ export function RestTimerBar({
           <input
             type="number" inputMode="decimal" value={weight}
             onChange={e => setWeight(e.target.value)}
-            placeholder="lbs" aria-label="Weight"
+            placeholder={u.weightUnit} aria-label="Weight"
             className="w-16 h-9 text-center rounded-md border border-[var(--line-2)] bg-[var(--bg-2)] font-mono text-[13px] text-[var(--ink-0)] focus:border-[var(--accent)] outline-none"
           />
           <button

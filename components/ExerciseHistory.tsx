@@ -4,6 +4,7 @@ import { useEffect, useRef, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { X } from 'lucide-react';
 import { useApp } from '@/lib/AppContext';
+import { useUnits } from '@/lib/units';
 import { LIFT_PRS_KEY } from '@/lib/constants';
 
 // ── Minimal parsers (duplicated to avoid cross-component imports) ─────────────
@@ -85,6 +86,7 @@ export function ExerciseHistoryModal({ name, open, onClose }: {
   onClose: () => void;
 }) {
   const { localDB } = useApp();
+  const u = useUnits();
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const history = useMemo(() => {
@@ -158,8 +160,8 @@ export function ExerciseHistoryModal({ name, open, onClose }: {
               <div className="grid grid-cols-3 gap-2">
                 {[
                   { label: 'Sessions',   value: String(history.length),                            color: 'var(--ink-0)'  },
-                  { label: 'All-time PR', value: prWeight > 0 ? `${prWeight} lb` : '—',            color: '#FFB547'       },
-                  { label: 'Last session', value: latest ? `${latest.maxW} lb` : '—',              color: 'var(--accent)' },
+                  { label: 'All-time PR', value: prWeight > 0 ? `${u.dispWeight(prWeight)} ${u.weightUnit}` : '—', color: '#FFB547'       },
+                  { label: 'Last session', value: latest ? `${u.dispWeight(latest.maxW)} ${u.weightUnit}` : '—',  color: 'var(--accent)' },
                 ].map(s => (
                   <div key={s.label} className="rounded border border-[var(--line)] bg-[var(--bg-2)] p-2.5 text-center">
                     <p className="font-mono text-[8px] text-[var(--ink-3)] uppercase tracking-[1px] mb-1">{s.label}</p>

@@ -190,6 +190,9 @@ function isSameWorkout(jsonA: string, jsonB: string): boolean {
 // SUB-COMPONENT — FormatSets / SetBadge
 // ─────────────────────────────────────────────────────────────────────────────
 function FormatSets({ sets }: { sets: Array<{ r: string; w: string }> }) {
+  const u = useUnits();
+  // Sets store weight in canonical lb; show it in the user's unit.
+  const w = (s: string) => (s ? u.dispWeight(parseFloat(s)) : s);
   if (!sets.length) return <span className="text-[var(--ink-3)]">—</span>;
   const n = sets.length;
   const allSameReps   = sets.every(s => s.r === sets[0].r);
@@ -202,7 +205,7 @@ function FormatSets({ sets }: { sets: Array<{ r: string; w: string }> }) {
           {n}×{sets[0].r || '—'}
         </span>
         {sets[0].w && (
-          <span className="font-mono text-[11px] text-[var(--accent)]">@ {sets[0].w}</span>
+          <span className="font-mono text-[11px] text-[var(--accent)]">@ {w(sets[0].w)}</span>
         )}
       </span>
     );
@@ -218,7 +221,7 @@ function FormatSets({ sets }: { sets: Array<{ r: string; w: string }> }) {
         >
           <span className="text-[9px] text-[var(--ink-3)]">{i + 1}</span>
           <span className="font-display text-[15px] leading-none text-[var(--ink-0)]">{s.r || '—'}</span>
-          {s.w && <span className="text-[10px] text-[var(--accent)]">@{s.w}</span>}
+          {s.w && <span className="text-[10px] text-[var(--accent)]">@{w(s.w)}</span>}
         </span>
       ))}
     </span>
@@ -229,16 +232,21 @@ function SetBadge({ sets, onSave }: {
   sets: Array<{ r: string; w: string }>;
   onSave: (updated: Array<{ r: string; w: string }>) => void;
 }) {
+  const u = useUnits();
   const [editing, setEditing] = useState(false);
   const [editSets, setEditSets] = useState<Array<{ r: string; w: string }>>([]);
   const wrapRef = useRef<HTMLDivElement>(null);
 
+  // Edit in the user's unit; persist canonical lb.
   const startEdit = () => {
-    setEditSets(sets.map(s => ({ ...s })));
+    setEditSets(sets.map(s => ({ r: s.r, w: s.w ? u.dispWeight(parseFloat(s.w)) : '' })));
     setEditing(true);
     setTimeout(() => wrapRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 350);
   };
-  const commit = useCallback(() => { onSave(editSets); setEditing(false); }, [editSets, onSave]);
+  const commit = useCallback(() => {
+    onSave(editSets.map(s => ({ r: s.r, w: s.w.trim() ? String(u.toStoredWeight(parseFloat(s.w))) : '' })));
+    setEditing(false);
+  }, [editSets, onSave, u]);
 
   const updateSet = (i: number, field: 'r' | 'w', val: string) => {
     setEditSets(prev => { const next = [...prev]; next[i] = { ...next[i], [field]: val }; return next; });
@@ -1271,10 +1279,15 @@ export default function WorkoutLogger() {
   const commitLift = useCallback(() => {
     const name = isCustomEx ? customName.trim() : selectedEx;
     if (!name || name === '__custom__') return;
-    const snappedSets = pendingSetData.map((s, i) => ({
-      r: repsRefs.current[i]?.value.trim()   || s.r || '1',
-      w: weightRefs.current[i]?.value.trim() || s.w || '',
-    }));
+    const snappedSets = pendingSetData.map((s, i) => {
+      // Inputs are in the user's unit; persist canonical lb so PRs / volume /
+      // battles (all lb) stay consistent.
+      const rawW = (weightRefs.current[i]?.value.trim() || s.w || '').trim();
+      return {
+        r: repsRefs.current[i]?.value.trim() || s.r || '1',
+        w: rawW ? String(u.toStoredWeight(parseFloat(rawW))) : '',
+      };
+    });
 
     // ── Outlier check ────────────────────────────────────────────────────────
     // 1.3× of existing PR is a generous ceiling — a legit PR jump is usually
@@ -1350,7 +1363,7 @@ export default function WorkoutLogger() {
   }, [
     isCustomEx, customName, customG2, customG3, selectedEx, pendingSetData,
     currentGroup, exercises, pendingSetsCount, outlierPending, activeDayFocus,
-    setPendingSetData, setExercises, startRest,
+    setPendingSetData, setExercises, startRest, u,
   ]);
 
   // Clear the pending outlier confirm whenever the exercise or any set value
@@ -1391,10 +1404,11 @@ export default function WorkoutLogger() {
               const w = parseFloat(String(s.w)) || 0;
               return w > acc.w ? { w, r: parseInt(String(s.r)) || 0 } : acc;
             }, { w: 0, r: 0 });
-            // Pre-fill the WEIGHTS from last session, but reset every rep count
-            // to 1 on purpose: the user should consciously enter today's reps
-            // rather than silently carrying stale numbers forward.
-            const sets = raw.map(s => ({ r: '1', w: String(s.w || '') }));
+            // Pre-fill the WEIGHTS from last session (converted to the user's
+            // unit for the input), but reset every rep count to 1 on purpose:
+            // the user should consciously enter today's reps rather than
+            // silently carrying stale numbers forward.
+            const sets = raw.map(s => ({ r: '1', w: s.w ? u.dispWeight(parseFloat(String(s.w))) : '' }));
             setPendingSetsCount(sets.length);
             setPendingSetData(sets);
             setPrefillSource({ date: ds, topWeight: topSet.w, topReps: topSet.r });
@@ -1404,7 +1418,7 @@ export default function WorkoutLogger() {
       } catch { /* skip corrupt records */ }
     }
     setPrefillSource(null);
-  }, [localDB, activeDayFocus, setPendingSetsCount, setPendingSetData]);
+  }, [localDB, activeDayFocus, setPendingSetsCount, setPendingSetData, u]);
 
   /** "Today" / "Yesterday" / "3 days ago" / "Jan 15" for a YYYY-MM-DD date.
    *  Used by the Last Session hint so the user sees how stale the pre-fill is. */
@@ -2370,7 +2384,7 @@ export default function WorkoutLogger() {
                     Last Session
                   </span>
                   <span className="font-mono text-[10px] text-[var(--ink-1)] tracking-[0.3px] flex-1">
-                    Top set <strong className="text-[var(--ink-0)]">{prefillSource.topWeight} lb × {prefillSource.topReps}</strong>
+                    Top set <strong className="text-[var(--ink-0)]">{u.dispWeight(prefillSource.topWeight)} {u.weightUnit} × {prefillSource.topReps}</strong>
                     {' · '}
                     <span className="text-[var(--ink-3)]">{fmtRelative(prefillSource.date)}</span>
                   </span>
@@ -2402,7 +2416,7 @@ export default function WorkoutLogger() {
                       if (best <= 0) return null;
                       return (
                         <span className="font-mono text-[8px] tracking-[1px] text-[var(--accent)] normal-case">
-                          ≈ {Math.round(best)} lb 1RM
+                          ≈ {Math.round(best)} {u.weightUnit} 1RM
                         </span>
                       );
                     })()}
@@ -2436,7 +2450,7 @@ export default function WorkoutLogger() {
                         <input
                           ref={el => { weightRefs.current[i] = el; }}
                           type="text" inputMode="decimal"
-                          value={set.w} placeholder="e.g. 135 lbs"
+                          value={set.w} placeholder={u.isMetric ? 'e.g. 60 kg' : 'e.g. 135 lbs'}
                           className="que-input py-2 font-mono text-[14px] font-bold"
                           onChange={e => updatePendingSet(i, 'w', e.target.value)}
                           onFocus={e => e.target.select()}
@@ -2468,7 +2482,7 @@ export default function WorkoutLogger() {
               {outlierPending && (
                 <div className="mb-2 rounded border border-[var(--warn)]/50 bg-[var(--warn)]/8 px-3 py-2">
                   <p className="font-mono text-[10px] text-[var(--warn)] tracking-[0.3px] leading-relaxed">
-                    <strong>{outlierPending.weight} lb</strong> is {(outlierPending.weight / outlierPending.pr).toFixed(1)}× your best ({outlierPending.pr} lb).
+                    <strong>{u.dispWeight(outlierPending.weight)} {u.weightUnit}</strong> is {(outlierPending.weight / outlierPending.pr).toFixed(1)}× your best ({u.dispWeight(outlierPending.pr)} {u.weightUnit}).
                     Tap <strong>Log Exercise</strong> again to confirm — or edit the weight if it&apos;s a typo.
                   </p>
                 </div>
