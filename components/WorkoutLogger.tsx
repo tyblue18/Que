@@ -31,6 +31,7 @@ import { ActivityIcon, PRLiveBadge } from '@/components/ActivityIcon';
 import { AutoCropImage } from '@/components/AutoCropImage';
 import { ExerciseHistoryModal } from '@/components/ExerciseHistory';
 import { parseEx, serializeEx, normalizeSets } from '@/lib/exerciseSerial';
+import { useUnits } from '@/lib/units';
 import { useRestTimer, DEFAULT_REST_MS } from '@/lib/RestTimerContext';
 import { trackEvent } from '@/lib/telemetry';
 import { queueSync, pushNow, gatherSettings } from '@/lib/syncEngine';
@@ -482,6 +483,37 @@ function CardioEntryCard({
   burnCalLabel?: string | null;
 }) {
   const cfg = CARDIO_CFG[entry.k];
+  const u = useUnits();
+
+  // The DISTANCE field stays canonical (miles) in entry. We render it from local
+  // display state so metric users can type decimals (km) without round-trip jank,
+  // and write canonical miles back to the entry live so persist/commit always
+  // has the real value. swim's distance is f2/v2; run & bike use f1/v1.
+  const distField: 'v1' | 'v2' = entry.k === 'swim' ? 'v2' : 'v1';
+  const distStored = entry[distField] ?? '';
+  const [distInput, setDistInput] = useState('');
+  const lastDistWrite = useRef<string | null>(null);
+  // Reseed on EXTERNAL change (preset load, undo) — but not our own live write.
+  useEffect(() => {
+    if (distStored === (lastDistWrite.current ?? '')) return;
+    setDistInput(distStored ? u.dispDistance(parseFloat(String(distStored))) : '');
+  }, [distStored]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Always reseed when the unit system flips (canonical entry is unchanged).
+  useEffect(() => {
+    setDistInput(distStored ? u.dispDistance(parseFloat(String(distStored))) : '');
+    lastDistWrite.current = distStored ? String(distStored) : null;
+  }, [u.system]); // eslint-disable-line react-hooks/exhaustive-deps
+  const onDistChange = (val: string) => {
+    setDistInput(val);
+    const mi = val.trim() ? String(u.toStoredDistance(parseFloat(val) || 0)) : '';
+    lastDistWrite.current = mi;
+    onUpdateField(entry._idx, distField, mi);
+  };
+  /** Cardio field label with MI swapped for the user's distance unit. */
+  const unitLabel = (raw: string) => raw.replace(/MI$/i, u.distanceUnit.toUpperCase());
+  const f1IsDist = distField === 'v1';
+  const f2IsDist = distField === 'v2';
+
   return (
     <div className="rounded border border-[var(--line)] bg-[var(--bg-2)] px-4 py-4 relative overflow-hidden">
       <span className="absolute left-0 top-0 bottom-0 w-[2px] bg-[var(--accent)]" />
@@ -518,20 +550,20 @@ function CardioEntryCard({
 
       <div className="grid grid-cols-2 gap-3 mb-3">
         <div>
-          <label className="que-label">{cfg.f1}</label>
+          <label className="que-label">{f1IsDist ? unitLabel(cfg.f1) : cfg.f1}</label>
           <input
             type="text" inputMode={cfg.f1mode as React.HTMLAttributes<HTMLInputElement>['inputMode']}
-            className="que-input" value={entry.v1 ?? ''} placeholder={cfg.f1ph}
-            onChange={e => onUpdateField(entry._idx, 'v1', e.target.value)}
+            className="que-input" value={f1IsDist ? distInput : (entry.v1 ?? '')} placeholder={cfg.f1ph}
+            onChange={e => f1IsDist ? onDistChange(e.target.value) : onUpdateField(entry._idx, 'v1', e.target.value)}
             onBlur={onCommit}
           />
         </div>
         <div>
-          <label className="que-label">{cfg.f2}</label>
+          <label className="que-label">{f2IsDist ? unitLabel(cfg.f2) : cfg.f2}</label>
           <input
             type="text" inputMode={cfg.f2mode as React.HTMLAttributes<HTMLInputElement>['inputMode']}
-            className="que-input" value={entry.v2 ?? ''} placeholder={cfg.f2ph}
-            onChange={e => onUpdateField(entry._idx, 'v2', e.target.value)}
+            className="que-input" value={f2IsDist ? distInput : (entry.v2 ?? '')} placeholder={cfg.f2ph}
+            onChange={e => f2IsDist ? onDistChange(e.target.value) : onUpdateField(entry._idx, 'v2', e.target.value)}
             onBlur={onCommit}
           />
         </div>
@@ -1202,6 +1234,7 @@ export default function WorkoutLogger() {
   // so it follows the user across tabs and survives an app restart. WorkoutLogger
   // just starts it on commit and provides the set-appender for the active day.
   const { startRest, registerLogSetHandler, canReopen, reopen } = useRestTimer();
+  const u = useUnits();
 
   // Quick-log a set from the rest bar straight into the exercise the timer
   // belongs to (matched by stable key). Reuses setExercises so persistence +
@@ -1566,8 +1599,8 @@ export default function WorkoutLogger() {
 
   const runMilesLabel = useMemo((): string | null => {
     if (!runTotalBadgeIcon) return null;
-    return `${Math.round(historicalTotalRunDist + todayRunDist)} mi`;
-  }, [runTotalBadgeIcon, historicalTotalRunDist, todayRunDist]);
+    return u.fmtDistance(historicalTotalRunDist + todayRunDist);
+  }, [runTotalBadgeIcon, historicalTotalRunDist, todayRunDist, u]);
 
   // Haptic pulse when any new run badge is first crossed this session.
   const prevRunBadgeRef = useRef<string | null>(null);
@@ -1630,8 +1663,8 @@ export default function WorkoutLogger() {
 
   const bikeMilesLabel = useMemo((): string | null => {
     if (bikeBadgeIcon !== '/Badges/Running_total_bike_badge.png') return null;
-    return `${Math.round(historicalTotalBikeDist + todayBikeDist)} mi`;
-  }, [bikeBadgeIcon, historicalTotalBikeDist, todayBikeDist]);
+    return u.fmtDistance(historicalTotalBikeDist + todayBikeDist);
+  }, [bikeBadgeIcon, historicalTotalBikeDist, todayBikeDist, u]);
 
   const prevBikeBadgeRef = useRef<string | null>(null);
   useEffect(() => {
@@ -1677,8 +1710,8 @@ export default function WorkoutLogger() {
 
   const swimMilesLabel = useMemo((): string | null => {
     if (!swimTotalBadgeIcon) return null;
-    return `${(historicalTotalSwimDist + todaySwimDist).toFixed(1)} mi`;
-  }, [swimTotalBadgeIcon, historicalTotalSwimDist, todaySwimDist]);
+    return u.fmtDistance(historicalTotalSwimDist + todaySwimDist);
+  }, [swimTotalBadgeIcon, historicalTotalSwimDist, todaySwimDist, u]);
 
   const prevSwimBadgeRef = useRef<string | null>(null);
   useEffect(() => {

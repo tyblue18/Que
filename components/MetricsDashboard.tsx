@@ -334,15 +334,19 @@ function CalorieBudgetCard({ m, onOpenProgress, prFlags }: {
   const openCardioModal = useCallback((kind: 'run' | 'bike' | 'swim') => {
     const rec = getDayRecord(activeDayFocus);
     const cfg = CARDIO_QUICK_CFG[kind];
-    setF1(String((rec as Record<string, unknown>)[cfg.f1key] || ''));
+    const f1IsDistance = cfg.f1key === 'runDist' || cfg.f1key === 'bikeDist';
+    const raw = (rec as Record<string, unknown>)[cfg.f1key];
+    setF1(raw ? (f1IsDistance ? u.dispDistance(parseNum(String(raw))) : String(raw)) : ''); // stored mi → display
     setF2(cfg.f2key ? String((rec as Record<string, unknown>)[cfg.f2key] || '') : '');
     setCardioModal(kind);
-  }, [getDayRecord, activeDayFocus]);
+  }, [getDayRecord, activeDayFocus, u]);
 
   const submitCardio = useCallback(() => {
     if (!cardioModal) return;
     const cfg = CARDIO_QUICK_CFG[cardioModal];
-    const updates: Partial<Record<string, number>> = { [cfg.f1key]: parseFloat(f1) || 0 };
+    const f1IsDistance = cfg.f1key === 'runDist' || cfg.f1key === 'bikeDist';
+    const f1val = parseFloat(f1) || 0;
+    const updates: Partial<Record<string, number>> = { [cfg.f1key]: f1IsDistance ? u.toStoredDistance(f1val) : f1val };
     if (cfg.f2key) updates[cfg.f2key] = parseFloat(f2) || 0;
     // Recompute `burn` from the FULL day's cardio (existing fields overlaid with
     // this edit, which lives in `updates` keyed by the field name) so the stored
@@ -358,7 +362,7 @@ function CalorieBudgetCard({ m, onOpenProgress, prFlags }: {
     }).activityBurn;
     updateDayRecord(activeDayFocus, updates as Parameters<typeof updateDayRecord>[1]);
     setCardioModal(null);
-  }, [cardioModal, f1, f2, activeDayFocus, updateDayRecord, getDayRecord, profile]);
+  }, [cardioModal, f1, f2, activeDayFocus, updateDayRecord, getDayRecord, profile, u]);
 
   const clearCardio = useCallback((kind: 'run' | 'bike' | 'swim') => {
     const clears: Partial<Record<string, number>> = kind === 'run'
@@ -377,12 +381,12 @@ function CalorieBudgetCard({ m, onOpenProgress, prFlags }: {
   const tiles = [
     {
       label: 'RUN',  value: m.runBurn,  key: 'run',
-      dist: runDist  > 0 ? `${runDist} mi`        : undefined,
+      dist: runDist  > 0 ? u.fmtDistance(runDist)  : undefined,
       pace: m.runPaceStr                           || undefined,
     },
     {
       label: 'BIKE', value: m.bikeBurn, key: 'bike',
-      dist: bikeDist > 0 ? `${bikeDist} mi`        : undefined,
+      dist: bikeDist > 0 ? u.fmtDistance(bikeDist) : undefined,
       pace: m.bikeSpeed > 0 ? `${m.bikeSpeed} mph` : undefined,
     },
     {
@@ -633,7 +637,9 @@ function CalorieBudgetCard({ m, onOpenProgress, prFlags }: {
                 </div>
                 <div className={`grid gap-2 mb-2.5 ${cfg.f2key ? 'grid-cols-2' : 'grid-cols-1'}`}>
                   <div>
-                    <label className="que-label">{cfg.f1label}</label>
+                    <label className="que-label">
+                      {cardioModal === 'run' || cardioModal === 'bike' ? `Distance / ${u.distanceUnit}` : cfg.f1label}
+                    </label>
                     <input
                       autoFocus type="text" inputMode={cfg.f1mode}
                       className="que-input" value={f1} onChange={e => setF1(e.target.value)}
@@ -1145,16 +1151,18 @@ function TrendsCard() {
     });
     const values = keys.map(ds => {
       const rec = localDB[ds];
-      // Weight converts to the user's display units; distance stays imperial for now.
+      // Convert stored (imperial) values to the user's display units.
       if (activeTab === 'weight')   return u.fromStoredWeight(parseFloat(String(rec?.weight   ?? '0')) || 0);
       if (activeTab === 'burn')     return Number(rec?.burn)                        || 0;
-      if (activeTab === 'runDist')  return parseFloat(String(rec?.runDist  ?? '0')) || 0;
-      if (activeTab === 'bikeDist') return parseFloat(String(rec?.bikeDist ?? '0')) || 0;
+      if (activeTab === 'runDist')  return u.fromStoredDistance(parseFloat(String(rec?.runDist  ?? '0')) || 0);
+      if (activeTab === 'bikeDist') return u.fromStoredDistance(parseFloat(String(rec?.bikeDist ?? '0')) || 0);
       if (activeTab === 'swimTime') return parseFloat(String(rec?.swimTime ?? '0')) || 0;
       return Number(rec?.budget) || 0;
     });
     const { color } = chartConfig[activeTab];
-    const unit = activeTab === 'weight' ? ` ${u.weightUnit}` : chartConfig[activeTab].unit;
+    const unit = activeTab === 'weight' ? ` ${u.weightUnit}`
+      : (activeTab === 'runDist' || activeTab === 'bikeDist') ? ` ${u.distanceUnit}`
+      : chartConfig[activeTab].unit;
 
     const rollingAvg = activeTab === 'weight' ? values.map((_, i) => {
       const win = values.slice(Math.max(0, i - 6), i + 1).filter(v => v > 0);

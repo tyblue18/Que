@@ -3,25 +3,32 @@
 import { useMemo } from 'react';
 import { TrendingUp, TrendingDown, Minus, Swords } from 'lucide-react';
 import { useApp } from '@/lib/AppContext';
+import { useUnits } from '@/lib/units';
 import { computeBeatLastWeek, type WeekCompare } from '@/lib/beatLastWeek';
 
 function fmtVal(v: number | null, unit: string): string {
   if (v === null) return '—';
-  const n = unit === 'mi' ? v.toFixed(1) : Math.round(v).toLocaleString();
+  const isDist = unit === 'mi' || unit === 'km';
+  const n = isDist ? v.toFixed(1) : Math.round(v).toLocaleString();
   return unit ? `${n} ${unit}` : n;
 }
 
 function Row({ c }: { c: WeekCompare }) {
+  const u     = useUnits();
   const color = c.outcome === 'ahead' ? 'var(--positive)' : c.outcome === 'behind' ? 'var(--danger)' : 'var(--ink-3)';
   const Icon  = c.outcome === 'ahead' ? TrendingUp : c.outcome === 'behind' ? TrendingDown : Minus;
+  // Distance categories are stored in miles — convert to the user's unit.
+  const isDist = c.unit === 'mi';
+  const unit   = isDist ? u.distanceUnit : c.unit;
+  const conv   = (v: number | null) => (v === null ? null : isDist ? u.fromStoredDistance(v) : v);
   return (
     <div className="flex items-center justify-between py-2 border-b border-[var(--line)] last:border-0">
       <span className="font-mono text-[11px] text-[var(--ink-1)]">{c.label}</span>
       <div className="flex items-center gap-2">
-        <span className="font-mono text-[12px] font-bold tabular-nums text-[var(--ink-0)]">{fmtVal(c.thisWeek, c.unit)}</span>
+        <span className="font-mono text-[12px] font-bold tabular-nums text-[var(--ink-0)]">{fmtVal(conv(c.thisWeek), unit)}</span>
         <Icon size={13} style={{ color }} aria-hidden />
         <span className="font-mono text-[9px] tabular-nums text-[var(--ink-3)] w-[64px] text-right">
-          vs {fmtVal(c.lastWeek, c.unit)}
+          vs {fmtVal(conv(c.lastWeek), unit)}
         </span>
       </div>
     </div>

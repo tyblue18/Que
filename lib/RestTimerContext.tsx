@@ -23,6 +23,7 @@
 import {
   createContext, useContext, useState, useEffect, useRef, useCallback, useMemo,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence } from 'framer-motion';
 import { useApp, type DayRecord } from '@/lib/AppContext';
 import { REST_TIMER_KEY } from '@/lib/constants';
@@ -96,6 +97,9 @@ export function RestTimerProvider({ children }: { children: React.ReactNode }) {
   const stateRef   = useRef(state);  stateRef.current = state;
   const localDBRef = useRef(localDB); localDBRef.current = localDB;
   const handlerRef = useRef<{ date: string; fn: LogSetFn } | null>(null);
+  // Portal target only exists on the client — gate the portal until mounted.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   const update = useCallback((fn: (p: PersistShape) => PersistShape) => {
     setState(prev => {
@@ -171,22 +175,30 @@ export function RestTimerProvider({ children }: { children: React.ReactNode }) {
     [startRest, canReopen, reopen, registerLogSetHandler],
   );
 
+  // Render the bar through a portal to <body> so it lives outside the tab
+  // subtree entirely — no stacking-context, overflow, or transform ancestor can
+  // ever clip or detach it as the user moves between tabs.
+  const bar = (
+    <AnimatePresence>
+      {state.visible && state.timer && (
+        <RestTimerBar
+          key="que-rest-timer"
+          startMs={state.timer.startMs}
+          durationMs={state.timer.durationMs}
+          suggestReps={state.timer.reps}
+          suggestWeight={state.timer.weight}
+          onLogSet={logSet}
+          onAdjust={adjust}
+          onDismiss={dismiss}
+        />
+      )}
+    </AnimatePresence>
+  );
+
   return (
     <Ctx.Provider value={value}>
       {children}
-      <AnimatePresence>
-        {state.visible && state.timer && (
-          <RestTimerBar
-            startMs={state.timer.startMs}
-            durationMs={state.timer.durationMs}
-            suggestReps={state.timer.reps}
-            suggestWeight={state.timer.weight}
-            onLogSet={logSet}
-            onAdjust={adjust}
-            onDismiss={dismiss}
-          />
-        )}
-      </AnimatePresence>
+      {mounted ? createPortal(bar, document.body) : null}
     </Ctx.Provider>
   );
 }
