@@ -8,7 +8,7 @@ import React, {
   useState,
 } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Activity, ChevronRight, Download, Plus, User, X } from 'lucide-react';
+import { Activity, ChevronRight, Download, History, Plus, User, X } from 'lucide-react';
 import {
   useApp,
   type DayRecord, type UserProfile,
@@ -22,12 +22,13 @@ import {
   type CardioFields, type BudgetMetrics, type PRFlags,
   EMPTY_CARDIO, INTENSITY_LABELS,
   useBudgetMetrics, computeCardioBurn, loadPlan, savePlanToStorage, intensityForKcal,
+  loadPlanHistory,
   getPlanBaseline, planExpectedChange,
   dayMaintenance, parseNum, fmt, fmtDateLong, toDateStr,
 } from '@/lib/metricsTypes';
 import { drawLineChart } from '@/lib/metricsCharts';
 import {
-  MilestoneModal, CelebrationModal, PlanProgressModal, PlanModal, ProjectionModal,
+  MilestoneModal, CelebrationModal, PlanProgressModal, PlanModal, ProjectionModal, PlanHistoryModal,
 } from '@/components/metrics/MetricsModals';
 import RunningPlanBuilder from '@/components/running/RunningPlanBuilder';
 
@@ -88,12 +89,14 @@ function StepSyncPanel() {
 // SUB-COMPONENT — ProfilePanel
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ProfilePanel({ profile, onChange, onOpenPlan, onOpenRunPlan }: {
+function ProfilePanel({ profile, onChange, onOpenPlan, onOpenRunPlan, onOpenHistory }: {
   profile: UserProfile;
   onChange: (updates: Partial<UserProfile>) => void;
   onOpenPlan: () => void;
   onOpenRunPlan: () => void;
+  onOpenHistory: () => void;
 }) {
+  const hasPlanHistory = typeof window !== 'undefined' && loadPlanHistory().length > 0;
   const activityOptions = [
     { value: '1.20', label: 'Desk job, no gym (×1.20)' },
     { value: '1.30', label: 'Desk job + light activity (×1.30)' },
@@ -237,6 +240,11 @@ function ProfilePanel({ profile, onChange, onOpenPlan, onOpenRunPlan }: {
           <button onClick={onOpenPlan} className="que-btn-ghost flex items-center gap-2">
             <Plus size={13} /> Create Plan
           </button>
+          {hasPlanHistory && (
+            <button onClick={onOpenHistory} className="que-btn-ghost flex items-center gap-2">
+              <History size={13} /> Plan History
+            </button>
+          )}
         </div>
 
         <StepSyncPanel />
@@ -1177,6 +1185,7 @@ export default function MetricsDashboard() {
   const [projVisible,      setProjVisible]      = useState(false);
   const [planOpen,         setPlanOpen]         = useState(false);
   const [progressOpen,     setProgressOpen]     = useState(false);
+  const [historyOpen,      setHistoryOpen]      = useState(false);
   const [celebrateVisible, setCelebrateVisible] = useState(false);
   const [milestone,        setMilestone]        = useState<{ pct: number; weightChange: number } | null>(null);
   const [runPlanOpen,      setRunPlanOpen]      = useState(false);
@@ -1372,6 +1381,16 @@ export default function MetricsDashboard() {
     );
   }
 
+  // Brand-new account → teach instead of showing empty charts/zeroes.
+  const hasAnyData = useMemo(
+    () => Object.values(localDB).some(r =>
+      parseNum(String(r.weight ?? 0)) > 0 ||
+      parseNum(String(r.calsEaten ?? 0)) > 0 ||
+      String(r.exercises ?? '').length > 2,
+    ),
+    [localDB],
+  );
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-5 pb-24 lg:py-8">
 
@@ -1414,9 +1433,29 @@ export default function MetricsDashboard() {
         </div>
       )}
 
+      {/* Streak nudge — once there's some data but no active streak yet. */}
+      {isLoaded && hasAnyData && streak === 0 && workoutStreak === 0 && weighStreak === 0 && (
+        <p className="mb-5 font-mono text-[10px] tracking-[0.5px] text-[var(--ink-3)]">
+          🔥 Log today to start a streak.
+        </p>
+      )}
+
+      {/* Teaching empty state — brand-new account with nothing logged. */}
+      {isLoaded && !hasAnyData && (
+        <div className="que-card mb-5 px-5 py-7 text-center">
+          <p className="font-display text-[18px] tracking-[1px] uppercase text-[var(--ink-1)] mb-2">
+            Nothing logged yet
+          </p>
+          <p className="font-mono text-[10px] text-[var(--ink-3)] tracking-[0.5px] leading-relaxed max-w-[280px] mx-auto">
+            Log a weigh-in, a meal, or a workout and your trend, calorie budget, streaks, and PRs will
+            start showing up here.
+          </p>
+        </div>
+      )}
+
       <WeeklyRecapCard />
 
-      {profileOpen && <ProfilePanel profile={profile} onChange={handleProfileChange} onOpenPlan={() => setPlanOpen(true)} onOpenRunPlan={() => setRunPlanOpen(true)} />}
+      {profileOpen && <ProfilePanel profile={profile} onChange={handleProfileChange} onOpenPlan={() => setPlanOpen(true)} onOpenRunPlan={() => setRunPlanOpen(true)} onOpenHistory={() => setHistoryOpen(true)} />}
 
       <CalorieBudgetCard m={m} onOpenProgress={() => setProgressOpen(true)} prFlags={prFlags} />
 
@@ -1450,6 +1489,13 @@ export default function MetricsDashboard() {
         onClose={() => setProgressOpen(false)}
         localDB={localDB}
         profile={profile}
+      />
+
+      <PlanHistoryModal
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        localDB={localDB}
+        todayStr={todayStr}
       />
 
       <CelebrationModal

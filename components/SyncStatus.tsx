@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { retrySync } from '@/lib/syncEngine';
 
 type SyncState = 'idle' | 'syncing' | 'ok' | 'error';
 
@@ -9,25 +10,30 @@ export function SyncStatus() {
   const [syncState, setSyncState] = useState<SyncState>('idle');
   const [isOnline,  setIsOnline]  = useState(true);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mirror of syncState for use inside stable event listeners (online handler).
+  const stateRef = useRef<SyncState>('idle');
+  stateRef.current = syncState;
 
+  // Only the transient "Synced" toast auto-hides. A failure stays put until the
+  // retry succeeds — a user who logged a PR must SEE that it didn't save.
   const scheduleHide = useCallback(() => {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     hideTimerRef.current = setTimeout(() => setSyncState('idle'), 2000);
   }, []);
 
   useEffect(() => {
-    // Online / offline
     setIsOnline(navigator.onLine);
-    const goOnline  = () => setIsOnline(true);
+    // Coming back online — if a sync had failed, transparently re-attempt it.
+    const goOnline  = () => { setIsOnline(true); if (stateRef.current === 'error') retrySync(); };
     const goOffline = () => setIsOnline(false);
     window.addEventListener('online',  goOnline);
     window.addEventListener('offline', goOffline);
 
-    // Sync events from syncEngine
     const onSync = (e: Event) => {
       const status = (e as CustomEvent<string>).detail as SyncState;
       setSyncState(status);
-      if (status === 'ok' || status === 'error') scheduleHide();
+      if (status === 'ok') scheduleHide();           // success auto-dismisses
+      else if (hideTimerRef.current) clearTimeout(hideTimerRef.current); // keep errors up
     };
     window.addEventListener('que-sync', onSync);
 
@@ -39,7 +45,7 @@ export function SyncStatus() {
     };
   }, [scheduleHide]);
 
-  const showToast = syncState === 'ok' || syncState === 'error' || syncState === 'syncing';
+  const showToast = syncState === 'ok' || syncState === 'syncing';
 
   return (
     <>
@@ -62,7 +68,39 @@ export function SyncStatus() {
         )}
       </AnimatePresence>
 
-      {/* Sync toast — brief */}
+      {/* Persistent sync-failure banner — recoverable. Stays until a retry lands. */}
+      <AnimatePresence>
+        {syncState === 'error' && (
+          <motion.div
+            initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            role="alert"
+            className="fixed bottom-[calc(env(safe-area-inset-bottom)+80px)] left-1/2 -translate-x-1/2 z-[600] flex items-center gap-3 rounded-lg px-4 py-2.5 shadow-lg max-w-[calc(100vw-24px)]"
+            style={{
+              background:     'rgba(255,77,94,0.15)',
+              border:         '1px solid rgba(255,77,94,0.45)',
+              backdropFilter: 'blur(12px)',
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF4D5E" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="flex-shrink-0">
+              <path d="M12 9v4M12 17h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            </svg>
+            <span className="font-mono text-[10px] font-bold tracking-[0.5px] uppercase text-[#FF4D5E] leading-tight">
+              Couldn&apos;t save — your changes are only on this device
+            </span>
+            <button
+              type="button"
+              onClick={() => retrySync()}
+              className="flex-shrink-0 rounded-full px-3 py-1 font-mono text-[10px] font-bold uppercase tracking-[1px] text-[#07080A] transition-transform active:scale-95"
+              style={{ background: '#FF4D5E' }}
+            >
+              Retry
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Transient toast — syncing / synced */}
       <AnimatePresence>
         {showToast && (
           <motion.div
@@ -71,10 +109,8 @@ export function SyncStatus() {
             transition={{ duration: 0.2 }}
             className="fixed bottom-[calc(env(safe-area-inset-bottom)+80px)] left-1/2 -translate-x-1/2 z-[600] flex items-center gap-2 rounded-full px-4 py-2 shadow-lg"
             style={{
-              background:   syncState === 'ok'      ? 'rgba(109,255,153,0.15)'
-                          : syncState === 'error'   ? 'rgba(255,77,94,0.15)'
-                          : 'rgba(79,195,247,0.12)',
-              border: `1px solid ${syncState === 'ok' ? 'rgba(109,255,153,0.4)' : syncState === 'error' ? 'rgba(255,77,94,0.4)' : 'rgba(79,195,247,0.3)'}`,
+              background:     syncState === 'ok' ? 'rgba(109,255,153,0.15)' : 'rgba(79,195,247,0.12)',
+              border:         `1px solid ${syncState === 'ok' ? 'rgba(109,255,153,0.4)' : 'rgba(79,195,247,0.3)'}`,
               backdropFilter: 'blur(12px)',
             }}
           >
@@ -88,16 +124,11 @@ export function SyncStatus() {
                 <polyline points="20 6 9 17 4 12"/>
               </svg>
             )}
-            {syncState === 'error' && (
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#FF4D5E" strokeWidth="2.5" strokeLinecap="round" aria-hidden>
-                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-              </svg>
-            )}
             <span
               className="font-mono text-[10px] font-bold tracking-[1px] uppercase whitespace-nowrap"
-              style={{ color: syncState === 'ok' ? '#6DFF99' : syncState === 'error' ? '#FF4D5E' : 'var(--accent)' }}
+              style={{ color: syncState === 'ok' ? '#6DFF99' : 'var(--accent)' }}
             >
-              {syncState === 'syncing' ? 'Syncing…' : syncState === 'ok' ? 'Synced' : 'Sync failed'}
+              {syncState === 'syncing' ? 'Syncing…' : 'Synced'}
             </span>
           </motion.div>
         )}

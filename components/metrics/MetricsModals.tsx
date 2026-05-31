@@ -19,6 +19,9 @@ import {
   intensityForKcal,
   loadPlan,
   savePlanToStorage,
+  archiveCurrentPlan,
+  loadPlanHistory,
+  type ArchivedPlan,
   getPlanBaseline,
   getPlanCompliance,
   getPlanStatus,
@@ -628,10 +631,14 @@ export function PlanModal({ open, onClose, profile, persistProfile, m, localDB, 
   const [goalMode,    setGoalMode]    = useState<'weight' | 'weeks'>('weight');
   const [goalWeight,  setGoalWeight]  = useState('');
   const [goalWeeks,   setGoalWeeks]   = useState('12');
+  // True once the user taps "Start a new plan" — Save then archives the current
+  // plan and begins a fresh one (new start date) instead of editing in place.
+  const [startingNew, setStartingNew] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     if (!open) return;
+    setStartingNew(false);
     const saved = loadPlan();
     if (saved) {
       setPlanType(saved.type);
@@ -741,20 +748,26 @@ export function PlanModal({ open, onClose, profile, persistProfile, m, localDB, 
     const kcal = projData.kcal;
     const intensity = intensityForKcal(kcal);
     const existing = loadPlan();
-    const isUpdate = !!existing;
+    // A "new chapter" = no existing plan, an explicit "start new plan", or a
+    // type flip (cut↔bulk = a different journey). Same-type tweaks stay edits so
+    // the window/progress isn't reset. A new chapter archives the old plan into
+    // history so the user's journey is never overwritten.
+    const isNewChapter = !existing || startingNew || existing.type !== planType;
+    if (existing && isNewChapter) {
+      archiveCurrentPlan(existing, todayStr, localDB);
+    }
     savePlanToStorage({
       type: planType, intensity, dailyKcal: kcal,
       // Snapshot the activity burn used to derive the projection so progress
       // tracking can apply the same cardio adjustment via getEffectiveDailyKcal().
       creationActivityBurn: Math.round(m.activityBurn),
-      // Preserve the original start date when updating — editing the plan (e.g.
-      // changing intensity or goal) must not reset the plan window and wipe the
-      // progress measured so far. Only a brand-new plan starts "today".
-      startDate: existing?.startDate ?? todayStr,
+      // Editing the current plan preserves its start date (keeps the measured
+      // window intact); a new chapter starts "today".
+      startDate: isNewChapter ? todayStr : existing!.startDate,
       startWeight: projData.startWeight, goalWeight: projData.goalWeight,
       weeksTarget: projData.weeks,
     });
-    trackEvent(isUpdate ? 'plan_updated' : 'plan_created', {
+    trackEvent(isNewChapter ? 'plan_created' : 'plan_updated', {
       type: planType,
       intensity,
       weeksTarget: projData.weeks,
@@ -767,9 +780,23 @@ export function PlanModal({ open, onClose, profile, persistProfile, m, localDB, 
     // though the plan projects weight gain.
     persistProfile({ deficit: String(planType === 'cut' ? kcal : -kcal) });
     onClose();
-  }, [projData, planType, m.activityBurn, todayStr, persistProfile, onClose]);
+  }, [projData, planType, m.activityBurn, todayStr, localDB, startingNew, persistProfile, onClose]);
 
   const isValid = !!projData && !!planType;
+
+  // Whether an active plan existed when the modal opened — drives the edit-vs-new
+  // banner and the title.
+  const hadExisting = useMemo(() => (open ? !!loadPlan() : false), [open]);
+  const editingActive = hadExisting && !startingNew;
+
+  const beginNewPlan = useCallback(() => {
+    setStartingNew(true);
+    setPlanType(null);
+    setKcalInput(String(INTENSITY_KCAL.moderate));
+    const tw = localDB[todayStr]?.weight ?? profile.weight;
+    setStartWeight(String(tw || ''));
+    setGoalWeight(''); setGoalWeeks('12'); setGoalMode('weight');
+  }, [localDB, todayStr, profile.weight]);
 
   return (
     <AnimatePresence>
@@ -790,12 +817,35 @@ export function PlanModal({ open, onClose, profile, persistProfile, m, localDB, 
             <div className="overflow-y-auto flex-1 p-4 md:p-6 overscroll-contain">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="font-display text-[22px] md:text-[26px] tracking-[2px] uppercase text-[var(--ink-0)]">
-                  Create Plan
+                  {editingActive ? 'Edit Plan' : 'New Plan'}
                 </h3>
                 <button onClick={onClose} className="text-[var(--ink-2)] hover:text-[var(--accent)] transition-colors p-1">
                   <X size={20} />
                 </button>
               </div>
+
+              {/* Editing the active plan → offer to start a fresh chapter instead
+                  (archives the current one to history). */}
+              {editingActive && (
+                <div className="flex items-center justify-between gap-3 mb-4 rounded border border-[var(--line-2)] bg-[var(--bg-2)] px-3 py-2.5">
+                  <span className="font-mono text-[9px] text-[var(--ink-2)] tracking-[0.5px] leading-snug">
+                    Editing your active plan. Done with it?
+                  </span>
+                  <button
+                    type="button" onClick={beginNewPlan}
+                    className="flex-shrink-0 font-mono text-[9px] font-bold uppercase tracking-[1px] text-[var(--accent)] hover:underline"
+                  >
+                    Start a new plan →
+                  </button>
+                </div>
+              )}
+              {startingNew && hadExisting && (
+                <div className="mb-4 rounded border border-[var(--accent)]/40 bg-[var(--accent-12)] px-3 py-2.5">
+                  <span className="font-mono text-[9px] text-[var(--accent)] tracking-[0.5px] leading-snug">
+                    Starting a new plan — your current one will be saved to your plan history.
+                  </span>
+                </div>
+              )}
 
               <p className="que-label mb-2">Plan Type</p>
               <div className="grid grid-cols-2 gap-2 mb-4">
@@ -1337,6 +1387,135 @@ export function ProjectionModal({ open, m, weightLbs, calsEaten, localDB, onClos
             <p className="mt-3 font-mono text-[9px] text-[var(--ink-3)] text-center tracking-[1px] uppercase">
               3,500 kcal ≈ 1 lb · 60% of cardio is eaten back; 40% counts as deficit
             </p>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLAN HISTORY — read-only timeline of the user's cut/bulk journey
+// ─────────────────────────────────────────────────────────────────────────────
+
+function fmtShortDate(ds: string): string {
+  const [y, m, d] = ds.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+function weeksBetween(a: string, b: string): number {
+  return Math.max(0, (new Date(b + 'T00:00:00').getTime() - new Date(a + 'T00:00:00').getTime()) / (7 * 86400000));
+}
+
+interface TimelineEntry {
+  active:      boolean;
+  type:        'cut' | 'bulk';
+  intensity:   PlanIntensity;
+  dailyKcal:   number;
+  startDate:   string;
+  endDate:     string;          // todayStr for the active plan
+  startWeight: number;
+  endWeight:   number | null;
+  weeks:       number;
+}
+
+function PlanRow({ e }: { e: TimelineEntry }) {
+  const accent = e.type === 'cut' ? 'var(--accent)' : 'var(--positive)';
+  const bg     = e.type === 'cut' ? 'var(--accent-12)' : 'var(--positive-12)';
+  const change = e.endWeight !== null ? e.endWeight - e.startWeight : null;
+  const label  = INTENSITY_LABELS[e.type][e.intensity];
+
+  return (
+    <div className="rounded border p-3.5" style={{ borderColor: e.active ? accent : 'var(--line-2)', background: e.active ? bg : 'var(--bg-2)' }}>
+      <div className="flex items-center justify-between mb-2">
+        <span className="font-display text-[15px] uppercase tracking-[1px]" style={{ color: accent }}>
+          {e.type === 'cut' ? '↓ Cut' : '↑ Bulk'}
+        </span>
+        <span className="font-mono text-[9px] font-bold tracking-[1px] uppercase px-2 py-0.5 rounded-sm"
+          style={{ color: e.active ? accent : 'var(--ink-3)', border: `1px solid ${e.active ? accent : 'var(--line-2)'}` }}>
+          {e.active ? 'In progress' : `${Math.round(e.weeks)} wk`}
+        </span>
+      </div>
+      <p className="font-mono text-[10px] text-[var(--ink-3)] tracking-[0.5px] mb-2.5">
+        {fmtShortDate(e.startDate)} → {e.active ? 'now' : fmtShortDate(e.endDate)} · {label} · {fmt(e.dailyKcal)} kcal
+      </p>
+      <div className="flex items-center gap-2 font-mono text-[12px] tabular-nums">
+        <span className="text-[var(--ink-1)]">{e.startWeight.toFixed(1)}</span>
+        <span className="text-[var(--ink-3)]">→</span>
+        <span className="text-[var(--ink-0)] font-bold">{e.endWeight !== null ? e.endWeight.toFixed(1) : '—'}</span>
+        <span className="text-[var(--ink-3)] text-[10px]">lb</span>
+        {change !== null && (
+          <span className="ml-auto font-bold" style={{ color: change <= 0 ? 'var(--positive)' : 'var(--accent)' }}>
+            {change > 0 ? '+' : ''}{change.toFixed(1)} lb
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function PlanHistoryModal({ open, onClose, localDB, todayStr }: {
+  open: boolean; onClose: () => void; localDB: LocalDB; todayStr: string;
+}) {
+  const entries = useMemo<TimelineEntry[]>(() => {
+    if (!open) return [];
+    const out: TimelineEntry[] = [];
+    const active = loadPlan();
+    if (active) {
+      const status = getPlanStatus(active, localDB);
+      out.push({
+        active: true, type: active.type, intensity: active.intensity, dailyKcal: active.dailyKcal,
+        startDate: active.startDate, endDate: todayStr,
+        startWeight: getPlanBaseline(active, localDB), endWeight: status.latestWeight,
+        weeks: weeksBetween(active.startDate, todayStr),
+      });
+    }
+    // Archived plans, newest first.
+    for (const p of loadPlanHistory().slice().reverse()) {
+      out.push({
+        active: false, type: p.type, intensity: p.intensity, dailyKcal: p.dailyKcal,
+        startDate: p.startDate, endDate: p.endDate,
+        startWeight: p.startWeight, endWeight: p.endWeight,
+        weeks: weeksBetween(p.startDate, p.endDate),
+      });
+    }
+    return out;
+  }, [open, localDB, todayStr]);
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="fixed inset-0 z-[300] flex items-end md:items-center justify-center backdrop-blur-sm px-3 md:px-0"
+          style={{ background: 'rgba(7,8,10,0.88)' }}
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+        >
+          <motion.div
+            className="w-full md:max-w-[520px] max-h-[88dvh] flex flex-col rounded-t-lg md:rounded-lg border border-[var(--line-2)] bg-[var(--bg-1)]"
+            initial={{ opacity: 0, y: 48 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 48 }}
+            transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+            style={{ boxShadow: '0 0 0 1px var(--line-2), 0 -2px 0 0 var(--accent), 0 40px 80px rgba(0,0,0,0.6)' }}
+          >
+            <div className="flex justify-between items-center p-4 md:p-6 pb-3 border-b border-[var(--line)]">
+              <h3 className="font-display text-[22px] md:text-[26px] tracking-[2px] uppercase text-[var(--ink-0)]">
+                Plan History
+              </h3>
+              <button onClick={onClose} className="text-[var(--ink-2)] hover:text-[var(--accent)] transition-colors p-1">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 p-4 md:p-6 space-y-2.5 overscroll-contain">
+              {entries.length === 0 ? (
+                <p className="font-mono text-[11px] text-[var(--ink-3)] text-center py-10 leading-relaxed">
+                  No plans yet. When you finish a cut or bulk and start a new one,<br />
+                  your past plans and their results will show up here.
+                </p>
+              ) : (
+                entries.map((e, i) => <PlanRow key={`${e.startDate}-${e.type}-${i}`} e={e} />)
+              )}
+            </div>
           </motion.div>
         </motion.div>
       )}

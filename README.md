@@ -219,9 +219,8 @@ public/
 ## Roadmap and known limitations
 
 - **Sync merge is per-day, not per-field.** If two devices edit different fields of the same day independently, the newer-edited day wins entirely and the other field is lost. A field-level merge is the next step.
-- **Plan history is single-active:** switching plans overwrites the previous one.
-- **Test coverage is early.** A Vitest suite exists (starting with the pure calorie/diet math); broader coverage of the engines is in progress.
-- **Onboarding doesn't ask plan intent,** so the default `profile.deficit = 500` may not match the user's goal until they open the plan modal.
+- **Plan history:** one plan is active at a time, but a superseded plan (a cut↔bulk switch, or an explicit "start a new plan") is archived read-only to a Plan History timeline, so the cut/bulk journey is preserved instead of overwritten.
+- **Test coverage is growing.** A Vitest suite covers the pure calorie/diet math, the battle/coin settlement engines (win/tie/double-pay/overdraft), and the "Beat Last Week" pace logic; broader coverage is ongoing.
 - No reduced-motion accessibility audit; viewport is locked (`maximumScale: 1`).
 
 ## License

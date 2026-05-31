@@ -12,6 +12,7 @@ import { prisma }           from '@/lib/prisma';
 import { sendPushToUser }   from '@/lib/push';
 import { challengeLimit }   from '@/lib/ratelimit';
 import { challengePostSchema } from '@/lib/validators';
+import { debitWalletOrThrow } from '@/lib/walletOps';
 import {
   windowBounds, todayUTC, isWindowComplete,
 } from '@/lib/battleEngine';
@@ -196,11 +197,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     challenge = await prisma.$transaction(async tx => {
       // Bragging-rights battles (wager 0) move no coins and write no ledger row.
       if (wager > 0) {
-        const updated = await tx.coinWallet.update({
-          where: { id: wallet.id },
-          data:  { balance: { decrement: wager } },
-        });
-        if (updated.balance < 0) throw new Error('INSUFFICIENT_FUNDS');
+        await debitWalletOrThrow(tx, wallet.id, wager);
         await tx.coinTransaction.create({
           data: { walletId: wallet.id, amount: -wager, reason: 'battle_bet' },
         });

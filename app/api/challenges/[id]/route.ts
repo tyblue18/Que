@@ -16,6 +16,7 @@ import { authOptions }      from '@/lib/auth';
 import { prisma }           from '@/lib/prisma';
 import { challengeLimit }   from '@/lib/ratelimit';
 import { challengeActionSchema } from '@/lib/validators';
+import { debitWalletOrThrow } from '@/lib/walletOps';
 import { resolveBattle, isWindowComplete, todayUTC } from '@/lib/battleEngine';
 import { awardBadgesForUser } from '@/lib/badgeEngine';
 
@@ -107,11 +108,7 @@ export async function POST(
     try {
       await prisma.$transaction(async tx => {
         if (challenge.wager > 0) {
-          const after = await tx.coinWallet.update({
-            where: { id: challengeeWallet.id },
-            data:  { balance: { decrement: challenge.wager } },
-          });
-          if (after.balance < 0) throw new Error('INSUFFICIENT_FUNDS');
+          await debitWalletOrThrow(tx, challengeeWallet.id, challenge.wager);
           await tx.coinTransaction.create({
             data: { walletId: challengeeWallet.id, amount: -challenge.wager, reason: 'battle_bet', refId: challenge.id },
           });
@@ -190,8 +187,7 @@ export async function POST(
     // Coins only move when something was actually wagered (bragging-rights = 0).
     if (challenge.wager > 0) {
       // Deduct wager from challengee — re-check balance atomically
-      const afterDeduct = await tx.coinWallet.update({ where: { id: challengeeWallet.id }, data: { balance: { decrement: challenge.wager } } });
-      if (afterDeduct.balance < 0) throw new Error('INSUFFICIENT_FUNDS');
+      await debitWalletOrThrow(tx, challengeeWallet.id, challenge.wager);
       await tx.coinTransaction.create({ data: { walletId: challengeeWallet.id, amount: -challenge.wager, reason: 'battle_bet', refId: challenge.id } });
 
       if (winnerId) {

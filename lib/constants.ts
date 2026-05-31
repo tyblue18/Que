@@ -35,6 +35,8 @@ export const MILLION_GROUPS_KEY = 'queMillionGroups';
 
 // Plan / presets / usage
 export const ATHLETE_PLAN_KEY   = 'queAthletePlan';
+// Read-only archive of superseded plans — the user's cut/bulk journey over time.
+export const PLAN_HISTORY_KEY   = 'queAthletePlanHistory';
 export const WORKOUT_PRESETS_KEY = 'queWorkoutPresets';
 export const EXERCISE_USAGE_KEY  = 'queExerciseUsage';
 export const CUSTOM_EXERCISES_KEY = 'queCustomExercises'; // user-added exercises (name + secondary/tertiary muscles), per group
@@ -57,3 +59,10 @@ export const WEIGHT_PROMPT_KEY  = 'queWeightPromptDate';   // legacy gate — cl
 export const WEIGHT_SKIP_KEY    = 'queWeightSkipDate';     // epoch-ms timestamp of the last morning-prompt skip (drives a 5-min snooze)
 export const SOCIAL_ANIM_KEY    = 'queSocialAnimIdx';
 export const COINS_MIGRATED_KEY = 'queCoinsMigrated';
+// Floating rest-timer state (device-local, NOT synced). Persisted so the bar
+// survives tab switches and app restarts mid-workout. Holds the active timer,
+// whether it's visible, and when the user last committed an exercise (drives
+// the "bring it back" button after a dismiss).
+export const REST_TIMER_KEY     = 'queRestTimer';
+// Week-one "Getting started" checklist state (device-local). { dismissed?, socialSeen? }.
+export const GETTING_STARTED_KEY = 'queGettingStarted';

@@ -10,7 +10,7 @@ import {
 import { useSpotlightBorder } from '@/hooks/useSpotlightBorder';
 import {
   Check, ChevronDown, Dumbbell, Edit3, Flame, GripVertical,
-  Layers, Plus, Save, Trash2, X,
+  Layers, Plus, Save, Timer, Trash2, X,
 } from 'lucide-react';
 import {
   useApp, PRESETS, SECONDARY_MUSCLES,
@@ -30,7 +30,8 @@ import { isGoalDay, dayMaintenanceFromRecord, type PlanDirection } from '@/lib/c
 import { ActivityIcon, PRLiveBadge } from '@/components/ActivityIcon';
 import { AutoCropImage } from '@/components/AutoCropImage';
 import { ExerciseHistoryModal } from '@/components/ExerciseHistory';
-import { RestTimerBar } from '@/components/workout/RestTimerBar';
+import { parseEx, serializeEx, normalizeSets } from '@/lib/exerciseSerial';
+import { useRestTimer, DEFAULT_REST_MS } from '@/lib/RestTimerContext';
 import { trackEvent } from '@/lib/telemetry';
 import { queueSync, pushNow, gatherSettings } from '@/lib/syncEngine';
 import Lottie from 'lottie-react';
@@ -172,19 +173,8 @@ const CARDIO_CFG: Record<CardioKind, {
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
-function parseEx(raw: string): ExerciseEntry[] {
-  if (!raw) return [];
-  try { const p = JSON.parse(raw); return Array.isArray(p) ? p : []; }
-  catch { return raw.split('\n').filter(l => l.trim()).map(l => ({ k: 'text' as const, n: l })); }
-}
-function serializeEx(arr: ExerciseEntry[]): string {
-  return arr.length ? JSON.stringify(arr) : '';
-}
-function normalizeSets(e: ExerciseEntry): Array<{ r: string; w: string }> {
-  if (e.sets && Array.isArray(e.sets)) return e.sets;
-  const count = parseInt(String(e.s ?? '1')) || 1;
-  return Array.from({ length: count }, () => ({ r: String(e.r ?? '1'), w: String(e.w ?? '') }));
-}
+// parseEx / serializeEx / normalizeSets now live in lib/exerciseSerial.ts so the
+// global rest-timer context appends sets with the exact same encoding.
 function capitalize(s: string): string { return s.charAt(0).toUpperCase() + s.slice(1); }
 
 /** Compare two serialised exercise lists by identity (kind + group + name),
@@ -1208,30 +1198,31 @@ export default function WorkoutLogger() {
   // second click before logging. Reset when inputs change.
   const [outlierPending, setOutlierPending] = useState<{ name: string; weight: number; pr: number } | null>(null);
 
-  // Rest timer state — populated whenever a lift is committed. Lives at the
-  // logger level so it survives between commits and renders the floating bar.
-  // Stored as wall-clock so it stays accurate even when the tab is backgrounded.
-  const [restTimer, setRestTimer] = useState<
-    { startMs: number; durationMs: number; exKey: string; reps: string; weight: string } | null
-  >(null);
-  const DEFAULT_REST_MS = 150_000; // 2:30 — a sane default for hypertrophy sets
+  // The floating rest bar now lives in a global context (lib/RestTimerContext)
+  // so it follows the user across tabs and survives an app restart. WorkoutLogger
+  // just starts it on commit and provides the set-appender for the active day.
+  const { startRest, registerLogSetHandler, canReopen, reopen } = useRestTimer();
 
   // Quick-log a set from the rest bar straight into the exercise the timer
-  // belongs to (matched by stable key), then restart the rest clock. Reuses
-  // setExercises so persistence + PR recompute + badge popups all fire.
-  const logRestSet = useCallback((reps: string, weight: string) => {
-    if (!restTimer) return;
-    const idx = exerciseKeysRef.current.indexOf(restTimer.exKey);
-    if (idx >= 0) {
-      setExercises(exercises.map((e, i) => {
-        if (i !== idx || e.k !== 'lift') return e;
-        const sets = Array.isArray(e.sets) && e.sets.length ? [...e.sets] : normalizeSets(e);
-        sets.push({ r: reps || '1', w: weight });
-        return { ...e, sets };
-      }));
-    }
-    setRestTimer(rt => rt && { ...rt, startMs: Date.now(), reps, weight });
-  }, [exercises, restTimer, setExercises]);
+  // belongs to (matched by stable key). Reuses setExercises so persistence +
+  // PR recompute + badge popups all fire; the context restarts the rest clock.
+  const logRestSet = useCallback((exKey: string, reps: string, weight: string) => {
+    const idx = exerciseKeysRef.current.indexOf(exKey);
+    if (idx < 0) return;
+    setExercises(exercises.map((e, i) => {
+      if (i !== idx || e.k !== 'lift') return e;
+      const sets = Array.isArray(e.sets) && e.sets.length ? [...e.sets] : normalizeSets(e);
+      sets.push({ r: reps || '1', w: weight });
+      return { ...e, sets };
+    }));
+  }, [exercises, setExercises]);
+
+  // Register the appender for the day we're showing, so the global bar's "Log
+  // set" delegates here (full PR/badge logic) while we're mounted on this day.
+  useEffect(() => {
+    registerLogSetHandler(activeDayFocus, logRestSet);
+    return () => registerLogSetHandler(activeDayFocus, null);
+  }, [activeDayFocus, logRestSet, registerLogSetHandler]);
 
   const commitLift = useCallback(() => {
     const name = isCustomEx ? customName.trim() : selectedEx;
@@ -1303,17 +1294,19 @@ export default function WorkoutLogger() {
     // than letting a stale timer expire mid-set. Carry the just-logged exercise's
     // key + last set so the bar can quick-log the next set into the right entry.
     const lastSet = snappedSets[snappedSets.length - 1] ?? { r: '1', w: '' };
-    setRestTimer({
+    startRest({
       startMs:    Date.now(),
       durationMs: DEFAULT_REST_MS,
+      date:       activeDayFocus,
+      exIndex:    next.length - 1,
       exKey:      exerciseKeysRef.current[exerciseKeysRef.current.length - 1] ?? '',
       reps:       lastSet.r,
       weight:     lastSet.w,
     });
   }, [
     isCustomEx, customName, customG2, customG3, selectedEx, pendingSetData,
-    currentGroup, exercises, pendingSetsCount, outlierPending,
-    setPendingSetData, setExercises,
+    currentGroup, exercises, pendingSetsCount, outlierPending, activeDayFocus,
+    setPendingSetData, setExercises, startRest,
   ]);
 
   // Clear the pending outlier confirm whenever the exercise or any set value
@@ -2005,19 +1998,8 @@ export default function WorkoutLogger() {
         onLoad={loadPreset} onClose={() => setTemplateModal(false)}
       />
 
-      <AnimatePresence>
-        {restTimer && (
-          <RestTimerBar
-            startMs={restTimer.startMs}
-            durationMs={restTimer.durationMs}
-            suggestReps={restTimer.reps}
-            suggestWeight={restTimer.weight}
-            onLogSet={logRestSet}
-            onAdjust={delta => setRestTimer(rt => rt && { ...rt, durationMs: Math.max(15_000, rt.durationMs + delta) })}
-            onDismiss={() => setRestTimer(null)}
-          />
-        )}
-      </AnimatePresence>
+      {/* The rest-timer bar itself is rendered globally by RestTimerProvider so
+          it follows the user across tabs — see lib/RestTimerContext.tsx. */}
 
       {/* ── Clear session confirm ── */}
       <AnimatePresence>
@@ -2099,6 +2081,18 @@ export default function WorkoutLogger() {
               </span>
             </div>
             <div className="flex items-center gap-2.5">
+              {/* Bring back the rest timer if it was dismissed/closed — only
+                  shown for a window after the last logged exercise. */}
+              {canReopen && (
+                <button
+                  onClick={reopen}
+                  title="Show rest timer"
+                  aria-label="Show rest timer"
+                  className="flex items-center gap-1.5 h-8 px-2.5 rounded bg-[var(--accent-12)] border border-[var(--accent)]/40 text-[var(--accent)] hover:bg-[var(--accent)]/20 hover:border-[var(--accent)] transition-all font-mono text-[10px] font-bold tracking-[1.5px] uppercase"
+                >
+                  <Timer size={13} /> Rest
+                </button>
+              )}
               <span className="font-mono text-[10px] font-bold tracking-[1.5px] text-[var(--accent)] bg-[var(--accent-12)] border border-[var(--accent)] rounded-sm px-3 py-1">
                 {dayLabel}
               </span>

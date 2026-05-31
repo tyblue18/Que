@@ -2,8 +2,9 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import Image from 'next/image';
-import { Bell, BellOff, Scale, Utensils } from 'lucide-react';
+import { Bell, BellOff, Scale, Utensils, TrendingDown, TrendingUp, Minus } from 'lucide-react';
 import { useApp } from '@/lib/AppContext';
+import { INTENSITY_KCAL, type PlanIntensity } from '@/lib/metricsTypes';
 import { pushNow } from '@/lib/syncEngine';
 
 export const ONBOARDING_KEY = 'queProfileSetup';
@@ -162,37 +163,161 @@ function NotificationsStep({ onDone }: { onDone: () => void }) {
   );
 }
 
+// ── Step 2 — Goal / plan intent ───────────────────────────────────────────────
+// Sets profile.deficit so the very first calorie budget reflects the user's
+// actual goal instead of the old hard-coded 500 kcal cut. Mirrors PlanModal:
+// cut → +kcal, bulk → −kcal, maintain → 0, with INTENSITY_KCAL as the magnitude.
+
+type Goal = 'lose' | 'maintain' | 'build';
+
+const GOAL_OPTIONS: { value: Goal; label: string; desc: string; Icon: typeof TrendingDown }[] = [
+  { value: 'lose',     label: 'Lose fat',     desc: 'Eat below maintenance to drop body fat.', Icon: TrendingDown },
+  { value: 'maintain', label: 'Maintain',     desc: 'Hold your weight at maintenance.',        Icon: Minus },
+  { value: 'build',    label: 'Build muscle', desc: 'Eat above maintenance to gain size.',     Icon: TrendingUp },
+];
+
+const PACE_OPTIONS: { value: PlanIntensity; label: string; rate: string }[] = [
+  { value: 'slight',     label: 'Gentle',     rate: '~0.5 lb/wk' },
+  { value: 'moderate',   label: 'Steady',     rate: '~1 lb/wk'   },
+  { value: 'aggressive', label: 'Intense',    rate: '~2 lb/wk'   },
+];
+
+function GoalStep({ onSubmit }: { onSubmit: (goal: Goal, pace: PlanIntensity) => void }) {
+  const [goal, setGoal] = useState<Goal | null>(null);
+  const [pace, setPace] = useState<PlanIntensity>('moderate');
+
+  const kcal  = INTENSITY_KCAL[pace];
+  const delta = goal === 'lose'  ? `−${kcal} kcal / day`
+              : goal === 'build' ? `+${kcal} kcal / day`
+              : goal === 'maintain' ? 'maintenance calories'
+              : '';
+
+  return (
+    <div className="w-full space-y-5">
+      <div className="text-center space-y-2">
+        <h1 className="font-display text-[26px] md:text-[32px] tracking-[2px] uppercase text-[var(--ink-0)]">
+          What&apos;s your goal?
+        </h1>
+        <p className="font-mono text-[10px] text-[var(--ink-3)] tracking-[1px] leading-relaxed">
+          This sets your daily calorie target. You can fine-tune it anytime in Metrics → Plan.
+        </p>
+      </div>
+
+      {/* Goal cards */}
+      <div className="space-y-2">
+        {GOAL_OPTIONS.map(({ value, label, desc, Icon }) => {
+          const active = goal === value;
+          return (
+            <button
+              key={value} type="button"
+              onClick={() => setGoal(value)}
+              className={[
+                'w-full flex items-center gap-3 px-4 py-3 rounded border text-left transition-all',
+                active
+                  ? 'border-[var(--accent)] bg-[var(--accent-12)]'
+                  : 'border-[var(--line-2)] bg-[var(--bg-2)] hover:border-[var(--line-3)]',
+              ].join(' ')}
+            >
+              <Icon size={18} className={active ? 'text-[var(--accent)]' : 'text-[var(--ink-3)]'} />
+              <div>
+                <p className={`font-mono text-[12px] font-bold uppercase tracking-[1px] ${active ? 'text-[var(--accent)]' : 'text-[var(--ink-1)]'}`}>
+                  {label}
+                </p>
+                <p className="font-mono text-[9px] text-[var(--ink-3)] tracking-[0.5px] mt-0.5">{desc}</p>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Pace — only relevant when changing weight */}
+      {goal && goal !== 'maintain' && (
+        <div>
+          <label className="que-label">How fast?</label>
+          <div className="flex gap-2">
+            {PACE_OPTIONS.map(({ value, label, rate }) => {
+              const active = pace === value;
+              return (
+                <button
+                  key={value} type="button"
+                  onClick={() => setPace(value)}
+                  className={[
+                    'flex-1 flex flex-col items-center py-2.5 rounded border font-mono transition-all',
+                    active
+                      ? 'border-[var(--accent)] bg-[var(--accent-12)] text-[var(--accent)]'
+                      : 'border-[var(--line-2)] bg-[var(--bg-2)] text-[var(--ink-2)] hover:border-[var(--line-3)]',
+                  ].join(' ')}
+                >
+                  <span className="text-[10px] font-bold uppercase tracking-[1px]">{label}</span>
+                  <span className="text-[8px] tracking-[0.5px] text-[var(--ink-3)] mt-0.5">{rate}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Live preview of the resulting daily target */}
+      {goal && (
+        <div className="text-center font-mono text-[10px] tracking-[0.5px] text-[var(--ink-2)] py-1">
+          Daily target: <span className="text-[var(--accent)] font-bold">{delta}</span>
+        </div>
+      )}
+
+      <button
+        type="button"
+        disabled={!goal}
+        onClick={() => goal && onSubmit(goal, pace)}
+        className="que-btn-primary w-full py-4 disabled:opacity-40"
+      >
+        Next
+      </button>
+    </div>
+  );
+}
+
 // ── Main Onboarding ────────────────────────────────────────────────────────────
 
 export function Onboarding({ onComplete }: { onComplete: () => void }) {
   const { setProfile, persistProfile, updateDayRecord, todayStr } = useApp();
 
-  const [step,     setStep]     = useState<'profile' | 'notifications'>('profile');
+  const [step,     setStep]     = useState<'profile' | 'goal' | 'notifications'>('profile');
   const [weight,   setWeight]   = useState('');
   const [height,   setHeight]   = useState('');
   const [age,      setAge]      = useState('');
   const [sex,      setSex]      = useState<'male' | 'female'>('male');
   const [activity, setActivity] = useState('1.45');
   const [error,    setError]    = useState('');
-  const [loading,  setLoading]  = useState(false);
 
-  const handleProfileSubmit = useCallback(async () => {
+  // Step 1 — save the BMR profile, then ask for goal. We deliberately DON'T set
+  // the deficit or mark onboarding complete here: the daily budget must reflect
+  // a goal the user actually chose (next step), not a silent default.
+  const handleProfileSubmit = useCallback(() => {
     if (!weight || !height || !age) {
       setError('Weight, height and age are required.');
       return;
     }
-    setLoading(true);
-
-    const updates = { weight, height, age, sex, activityLevel: activity, deficit: '500' };
+    const updates = { weight, height, age, sex, activityLevel: activity };
     setProfile(updates);
     persistProfile(updates);
     updateDayRecord(todayStr, { weight });
+    setError('');
+    setStep('goal');
+  }, [weight, height, age, sex, activity, todayStr, setProfile, persistProfile, updateDayRecord]);
+
+  // Step 2 — translate goal + pace into a signed deficit and persist it, then
+  // complete onboarding. Cut → +kcal, bulk → −kcal, maintain → 0 (mirrors the
+  // single-form budget = TDEE − deficit + eatBack used everywhere else).
+  const handleGoalSubmit = useCallback((goal: Goal, pace: PlanIntensity) => {
+    const kcal    = INTENSITY_KCAL[pace];
+    const deficit = goal === 'lose' ? String(kcal)
+                  : goal === 'build' ? String(-kcal)
+                  : '0';
+    persistProfile({ deficit });
     localStorage.setItem(ONBOARDING_KEY, 'done');
     pushNow({});
-
-    setLoading(false);
     setStep('notifications');
-  }, [weight, height, age, sex, activity, todayStr, setProfile, persistProfile, updateDayRecord]);
+  }, [persistProfile]);
 
   return (
     <div className="fixed inset-0 z-[500] flex flex-col bg-[var(--bg-0)] overflow-y-auto">
@@ -207,7 +332,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
 
         {/* Step indicator */}
         <div className="flex gap-2 mb-8">
-          {(['profile', 'notifications'] as const).map((s, i) => (
+          {(['profile', 'goal', 'notifications'] as const).map((s) => (
             <div
               key={s}
               className="h-1 rounded-full transition-all"
@@ -296,13 +421,14 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
               <button
                 type="button"
                 onClick={handleProfileSubmit}
-                disabled={loading}
                 className="que-btn-primary w-full py-4 mt-2"
               >
-                {loading ? 'Saving…' : 'Next'}
+                Next
               </button>
             </div>
           </>
+        ) : step === 'goal' ? (
+          <GoalStep onSubmit={handleGoalSubmit} />
         ) : (
           <NotificationsStep onDone={onComplete} />
         )}

@@ -9,6 +9,7 @@ import {
 import dynamic                                       from 'next/dynamic';
 import ProfileCard, { type PublicProfile }           from '@/components/ProfileCard';
 import { InviteFriends }                              from '@/components/social/InviteFriends';
+import { BeatLastWeek }                                from '@/components/social/BeatLastWeek';
 import { Groups }                                     from '@/components/social/Groups';
 import { TeamBattles }                               from '@/components/social/TeamBattles';
 import {
@@ -1419,6 +1420,9 @@ export default function SocialTab() {
           <ProfileCard profile={ownProfile} isOwn stats={{ streak: profileStreak, weekVolume }} onRefresh={refresh} />
         </div>
       )}
+
+      {/* ── BEAT LAST WEEK (solo competitive on-ramp — no friends required) ──── */}
+      <BeatLastWeek />
 
       {/* ── GROUPS (community hub — feeds + team battles entry) ──────────────── */}
       {hasUsername && ownProfile?.id && (

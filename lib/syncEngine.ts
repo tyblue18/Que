@@ -6,7 +6,9 @@
  *  • Every localDB change queues a debounced push (includes settings snapshot).
  *  • On app start (after localStorage hydration), pullFromCloud() is called.
  *    Remote data is merged in — remote wins, so the most recently-synced device wins.
- *  • All failures are silent — the app works identically offline.
+ *  • Transient failures retry silently (2× with backoff). A push that still
+ *    fails surfaces a persistent "couldn't save — Retry" banner and is held in
+ *    lastFailedDB for re-send; the app keeps working offline either way.
  *
  * Debounce: 4 s — prevents hitting the API on every keystroke.
  */
@@ -23,10 +25,16 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingLocalDB: Record<string, unknown> = {};
 let _status: SyncStatus = 'idle';
 
+// Days whose push terminally failed (after retries). Held in memory so the user
+// can hit "Retry" and we re-send the exact data instead of losing it. The data
+// itself is still safe in localStorage; this just remembers WHICH days need a
+// re-push, since pendingLocalDB was already drained when the failed push fired.
+let lastFailedDB: Record<string, unknown> = {};
+
 const DEBOUNCE_MS = 4_000;
 
 import {
-  ATHLETE_PLAN_KEY, WORKOUT_PRESETS_KEY, TEMPLATES_KEY, EXERCISE_USAGE_KEY,
+  ATHLETE_PLAN_KEY, PLAN_HISTORY_KEY, WORKOUT_PRESETS_KEY, TEMPLATES_KEY, EXERCISE_USAGE_KEY,
   CUSTOM_EXERCISES_KEY,
   LAST_STREAK_KEY, LIFT_PRS_KEY, MILLION_GROUPS_KEY, MACRO_GOALS_KEY,
   COIN_KEY, PROFILE_PHOTO_KEY, DB_KEY, PENDING_BADGE_POPUPS_KEY,
@@ -59,6 +67,7 @@ function enqueueBadgePopups(badges: EarnedBadge[]): void {
 // All localStorage keys that belong in the synced "settings" blob
 const SETTINGS_KEYS = [
   ATHLETE_PLAN_KEY,        // cut/bulk plan
+  PLAN_HISTORY_KEY,        // archive of past plans (the journey)
   WORKOUT_PRESETS_KEY,     // saved workout presets
   TEMPLATES_KEY,           // custom templates
   EXERCISE_USAGE_KEY,      // exercise frequency (for sorting)
@@ -186,6 +195,26 @@ export async function pullFromCloud(): Promise<SyncPayload | null> {
 
 export function getSyncStatus(): SyncStatus { return _status; }
 
+/** True if a previous push terminally failed and its data is still unsaved on
+ *  the server. Drives the persistent "couldn't save" banner + Retry button. */
+export function hasFailedSync(): boolean {
+  return Object.keys(lastFailedDB).length > 0;
+}
+
+/**
+ * Re-push the data from the last failed sync (plus anything queued since).
+ * User-initiated via the Retry button, and auto-fired on reconnect. Clears the
+ * failed set optimistically; if it fails again, _push repopulates it.
+ */
+export function retrySync(): void {
+  if (typeof window === 'undefined') return;
+  if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
+  const localDB = { ...lastFailedDB, ...pendingLocalDB };
+  lastFailedDB   = {};
+  pendingLocalDB = {};
+  void _push({ localDB, settings: gatherSettings() });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // INTERNAL
 // ─────────────────────────────────────────────────────────────────────────────
@@ -256,9 +285,12 @@ async function _push(payload: SyncPayload, attempt = 0): Promise<void> {
           detail: { dates: Object.keys(payload.localDB), syncedAt },
         }));
       }
+      lastFailedDB = {}; // this push (and any earlier failures it carried) landed
       dispatch('ok');
     } else if (res.status === 401 || res.status === 429) {
-      // Auth failure or rate limit — don't retry
+      // Auth failure or rate limit — don't auto-retry, but keep the data so the
+      // user can Retry (after re-auth / once the limit clears).
+      rememberFailure(payload);
       dispatch('error');
     } else if (attempt < 2) {
       // Server error — retry with backoff (3s, then 9s).
@@ -267,6 +299,7 @@ async function _push(payload: SyncPayload, attempt = 0): Promise<void> {
       const retryPayload = { ...payload, settings: gatherSettings() };
       setTimeout(() => void _push(retryPayload, attempt + 1), 3000 * (attempt + 1));
     } else {
+      rememberFailure(payload);
       dispatch('error');
     }
   } catch {
@@ -275,7 +308,15 @@ async function _push(payload: SyncPayload, attempt = 0): Promise<void> {
       const retryPayload = { ...payload, settings: gatherSettings() };
       setTimeout(() => void _push(retryPayload, attempt + 1), 3000 * (attempt + 1));
     } else {
+      rememberFailure(payload);
       dispatch('error');
     }
   }
+}
+
+/** Remember the days a terminally-failed push was carrying so Retry can re-send
+ *  them. Accumulates across failures so a second failing push can't drop the
+ *  first's unsaved days. */
+function rememberFailure(payload: SyncPayload): void {
+  if (payload.localDB) lastFailedDB = { ...lastFailedDB, ...payload.localDB };
 }

@@ -79,7 +79,7 @@ export interface AthletePlan {
   creationActivityBurn?: number;
 }
 
-import { ATHLETE_PLAN_KEY, GOAL_TOLERANCE } from '@/lib/constants';
+import { ATHLETE_PLAN_KEY, PLAN_HISTORY_KEY, GOAL_TOLERANCE } from '@/lib/constants';
 // Re-exported under the legacy PLAN_KEY name so existing imports keep working.
 export const PLAN_KEY = ATHLETE_PLAN_KEY;
 
@@ -89,6 +89,60 @@ export function loadPlan(): AthletePlan | null {
 }
 export function savePlanToStorage(p: AthletePlan) {
   try { localStorage.setItem(PLAN_KEY, JSON.stringify(p)); } catch { /* noop */ }
+}
+
+// ── Plan history (the journey) ───────────────────────────────────────────────
+// A plan is single-active, but each time one is superseded (a cut→bulk switch,
+// or an explicit "start new plan") the old one is archived here with its end
+// date and final weigh-in. Read-only — past plans are never edited, only shown.
+
+/** A past plan, frozen at the moment it was superseded. */
+export interface ArchivedPlan extends AthletePlan {
+  /** When the plan was archived / superseded (YYYY-MM-DD). */
+  endDate:   string;
+  /** Last weigh-in within [startDate, endDate], or null if none was logged. */
+  endWeight: number | null;
+}
+
+const PLAN_HISTORY_MAX = 50;
+
+export function loadPlanHistory(): ArchivedPlan[] {
+  try {
+    const raw = localStorage.getItem(PLAN_HISTORY_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? (arr as ArchivedPlan[]) : [];
+  } catch { return []; }
+}
+
+function savePlanHistory(list: ArchivedPlan[]): void {
+  try { localStorage.setItem(PLAN_HISTORY_KEY, JSON.stringify(list.slice(-PLAN_HISTORY_MAX))); }
+  catch { /* noop */ }
+}
+
+/** Latest logged weigh-in within [startDate, endDate], or null. */
+function lastWeighInWindow(localDB: LocalDB, startDate: string, endDate: string): number | null {
+  const weighed = Object.entries(localDB)
+    .filter(([ds, r]) => ds >= startDate && ds <= endDate && parseFloat(String((r as DayRecord).weight ?? '0')) > 0)
+    .sort(([a], [b]) => a.localeCompare(b));
+  if (weighed.length === 0) return null;
+  return parseFloat(String((weighed[weighed.length - 1][1] as DayRecord).weight));
+}
+
+/**
+ * Archive a plan into history with its end date + final weigh-in. Idempotent on
+ * (startDate, type): re-archiving the same plan replaces its entry rather than
+ * duplicating it (safe if the archive path runs twice). Returns the record.
+ */
+export function archiveCurrentPlan(plan: AthletePlan, endDate: string, localDB: LocalDB): ArchivedPlan {
+  const archived: ArchivedPlan = {
+    ...plan,
+    endDate,
+    endWeight: lastWeighInWindow(localDB, plan.startDate, endDate),
+  };
+  const history = loadPlanHistory().filter(p => !(p.startDate === plan.startDate && p.type === plan.type));
+  history.push(archived);
+  savePlanHistory(history);
+  return archived;
 }
 
 /**

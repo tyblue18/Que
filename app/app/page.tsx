@@ -7,6 +7,7 @@ import { AuthHeader }    from '@/components/header';
 import CalendarScheduler from '@/components/CalendarScheduler';
 import WorkoutLogger     from '@/components/WorkoutLogger';
 import { Onboarding, needsOnboarding } from '@/components/Onboarding';
+import { GettingStarted } from '@/components/GettingStarted';
 import { MorningWeightPrompt } from '@/components/MorningWeightPrompt';
 import { WeeklyRecapModal } from '@/components/WeeklyRecapModal';
 import { InviteRedeemer } from '@/components/InviteRedeemer';
@@ -16,6 +17,7 @@ import { InvitePrompt } from '@/components/InvitePrompt';
 import { SyncNudge } from '@/components/SyncNudge';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { useApp } from '@/lib/AppContext';
+import { RestTimerProvider } from '@/lib/RestTimerContext';
 import { trackEvent } from '@/lib/telemetry';
 
 // Lazy-load the non-default tabs so they (and their heavy deps — charts, Lottie,
@@ -53,6 +55,7 @@ export default function WorkoutPage() {
   }, [isLoaded]);
 
   return (
+    <RestTimerProvider>
     <div className="app-shell">
       <AuthHeader />
       <InviteRedeemer />
@@ -67,6 +70,7 @@ export default function WorkoutPage() {
             show up in /api/log/error → Vercel logs. */}
         {tab === 'calendar' && (
           <ErrorBoundary label="Calendar">
+            <GettingStarted onNavigate={setTab} />
             <div className="app-calendar-layout">
               <CalendarScheduler />
               <WorkoutLogger />
@@ -120,5 +124,6 @@ export default function WorkoutPage() {
       {!showOnboarding && isLoaded && <MorningWeightPrompt />}
       {!showOnboarding && isLoaded && <WeeklyRecapModal />}
     </div>
+    </RestTimerProvider>
   );
 }
