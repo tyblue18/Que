@@ -6,6 +6,11 @@ import { Bell, BellOff, Scale, Utensils, TrendingDown, TrendingUp, Minus } from 
 import { useApp } from '@/lib/AppContext';
 import { INTENSITY_KCAL, type PlanIntensity } from '@/lib/metricsTypes';
 import { pushNow } from '@/lib/syncEngine';
+import {
+  type UnitSystem, detectDefaultUnits, setUnits as persistUnits,
+  weightUnit, heightUnit, kgToLb, cmToIn, toStoredWeight, toStoredHeight, dispWeight, dispHeight,
+} from '@/lib/units';
+import { UNITS_KEY } from '@/lib/constants';
 
 export const ONBOARDING_KEY = 'queProfileSetup';
 
@@ -288,6 +293,23 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
   const [sex,      setSex]      = useState<'male' | 'female'>('male');
   const [activity, setActivity] = useState('1.45');
   const [error,    setError]    = useState('');
+  // Default to the locale's likely system for a brand-new user; respect any
+  // saved choice. The form collects values in this system and converts to the
+  // canonical imperial storage on submit.
+  const [units, setUnitsState] = useState<UnitSystem>('imperial');
+  useEffect(() => {
+    const stored = localStorage.getItem(UNITS_KEY);
+    setUnitsState(stored === 'metric' ? 'metric' : stored === 'imperial' ? 'imperial' : detectDefaultUnits());
+  }, []);
+
+  // Toggle units, converting any already-typed values so the real measurement
+  // is preserved (185 lb ↔ 83.9 kg) rather than reinterpreted.
+  const switchUnits = useCallback((next: UnitSystem) => {
+    setWeight(prev => { const n = parseFloat(prev); return n > 0 ? dispWeight(toStoredWeight(n, units), next) : prev; });
+    setHeight(prev => { const n = parseFloat(prev); return n > 0 ? dispHeight(toStoredHeight(n, units), next) : prev; });
+    persistUnits(next);
+    setUnitsState(next);
+  }, [units]);
 
   // Step 1 — save the BMR profile, then ask for goal. We deliberately DON'T set
   // the deficit or mark onboarding complete here: the daily budget must reflect
@@ -297,13 +319,16 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
       setError('Weight, height and age are required.');
       return;
     }
-    const updates = { weight, height, age, sex, activityLevel: activity };
+    // Persist canonical imperial; imperial users' strings pass through untouched.
+    const wStored = units === 'metric' ? kgToLb(parseFloat(weight)).toFixed(1) : weight;
+    const hStored = units === 'metric' ? cmToIn(parseFloat(height)).toFixed(1) : height;
+    const updates = { weight: wStored, height: hStored, age, sex, activityLevel: activity };
     setProfile(updates);
     persistProfile(updates);
-    updateDayRecord(todayStr, { weight });
+    updateDayRecord(todayStr, { weight: wStored });
     setError('');
     setStep('goal');
-  }, [weight, height, age, sex, activity, todayStr, setProfile, persistProfile, updateDayRecord]);
+  }, [weight, height, age, sex, activity, units, todayStr, setProfile, persistProfile, updateDayRecord]);
 
   // Step 2 — translate goal + pace into a signed deficit and persist it, then
   // complete onboarding. Cut → +kcal, bulk → −kcal, maintain → 0 (mirrors the
@@ -355,20 +380,35 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
 
             <div className="w-full space-y-4">
 
+              {/* Units toggle */}
+              <div className="flex rounded-md border border-[var(--line-2)] overflow-hidden">
+                {(['imperial', 'metric'] as const).map(sys => (
+                  <button
+                    key={sys} type="button" onClick={() => switchUnits(sys)}
+                    className={[
+                      'flex-1 py-2 font-mono text-[10px] font-bold uppercase tracking-[1.5px] transition-colors',
+                      units === sys ? 'bg-[var(--accent-12)] text-[var(--accent)]' : 'bg-[var(--bg-2)] text-[var(--ink-3)]',
+                    ].join(' ')}
+                  >
+                    {sys === 'imperial' ? 'lb / in' : 'kg / cm'}
+                  </button>
+                ))}
+              </div>
+
               <div>
-                <label className="que-label">Current Weight / lbs</label>
+                <label className="que-label">Current Weight / {weightUnit(units)}</label>
                 <input
                   type="number" inputMode="decimal" className="que-input"
-                  placeholder="e.g. 185"
+                  placeholder={units === 'metric' ? 'e.g. 84' : 'e.g. 185'}
                   value={weight} onChange={e => { setWeight(e.target.value); setError(''); }}
                 />
               </div>
 
               <div>
-                <label className="que-label">Height / inches</label>
+                <label className="que-label">Height / {heightUnit(units)}</label>
                 <input
                   type="number" inputMode="decimal" className="que-input"
-                  placeholder="e.g. 70  (5 ft 10 in = 70)"
+                  placeholder={units === 'metric' ? 'e.g. 178' : 'e.g. 70  (5 ft 10 in = 70)'}
                   value={height} onChange={e => setHeight(e.target.value)}
                 />
               </div>

@@ -42,6 +42,7 @@ export const EXERCISE_USAGE_KEY  = 'queExerciseUsage';
 export const CUSTOM_EXERCISES_KEY = 'queCustomExercises'; // user-added exercises (name + secondary/tertiary muscles), per group
 
 // UI preferences
+export const UNITS_KEY         = 'queUnits';   // 'imperial' | 'metric' — display/input only; storage stays imperial
 export const PROFILE_PHOTO_KEY = 'queProfilePhoto';
 export const ACCENT_KEY        = 'queAccentColor';
 export const BG_KEY            = 'queBgPreset';

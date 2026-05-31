@@ -11,6 +11,7 @@ import {
   type DayRecord,
   type UserProfile,
 } from '@/lib/AppContext';
+import { useUnits } from '@/lib/units';
 import {
   type BudgetMetrics,
   type PlanIntensity,
@@ -50,7 +51,9 @@ export function MilestoneModal({ open, onClose, pct, weightChange }: {
     75: { title: 'Almost done!',   sub: 'The finish line is in sight.' },
   };
   const info = labels[pct] ?? { title: `${pct}% complete`, sub: '' };
-  const sign = weightChange > 0 ? '+' : '';
+  const u = useUnits();
+  const changeDisp = u.fromStoredWeight(weightChange); // stored lb delta → display units
+  const sign = changeDisp > 0 ? '+' : '';
   return (
     <AnimatePresence>
       {open && (
@@ -77,7 +80,7 @@ export function MilestoneModal({ open, onClose, pct, weightChange }: {
               <h3 className="font-display text-[24px] tracking-[2px] uppercase text-[var(--positive)]">{info.title}</h3>
               {weightChange !== 0 && (
                 <p className="font-mono text-[11px] font-bold text-[var(--ink-1)]">
-                  {sign}{weightChange.toFixed(1)} lbs so far
+                  {sign}{changeDisp.toFixed(1)} {u.weightUnit} so far
                 </p>
               )}
               <p className="font-mono text-[10px] text-[var(--ink-3)] tracking-[0.5px]">{info.sub}</p>
@@ -99,7 +102,9 @@ export function CelebrationModal({ open, onClose, localDB, calsEaten, budget }: 
   localDB: LocalDB; calsEaten: number; budget: number;
 }) {
   const plan   = open ? loadPlan() : null;
-  const sign   = (n: number) => n > 0 ? `+${n.toFixed(1)}` : n.toFixed(1);
+  const u      = useUnits();
+  // signed weight delta in display units, e.g. "+1.3"
+  const sign   = (lb: number) => { const n = u.fromStoredWeight(lb); return n > 0 ? `+${n.toFixed(1)}` : n.toFixed(1); };
 
   const { latestWeight, actualChange, weeksSince, status, baseline } = useMemo(() => {
     if (!plan) return { latestWeight: null, actualChange: null, weeksSince: 0, status: 'no-data' as const, baseline: 0 };
@@ -168,9 +173,9 @@ export function CelebrationModal({ open, onClose, localDB, calsEaten, budget }: 
 
                   <div className="grid grid-cols-3 gap-2">
                     {[
-                      { label: 'Start',   value: `${baseline.toFixed(1)} lb` },
-                      { label: 'Current', value: latestWeight ? `${latestWeight.toFixed(1)} lb` : '—' },
-                      { label: 'Change',  value: actualChange !== null ? `${sign(actualChange)} lb` : '—', accent: true },
+                      { label: 'Start',   value: u.fmtWeight(baseline) },
+                      { label: 'Current', value: latestWeight ? u.fmtWeight(latestWeight) : '—' },
+                      { label: 'Change',  value: actualChange !== null ? `${sign(actualChange)} ${u.weightUnit}` : '—', accent: true },
                     ].map(t => (
                       <div key={t.label} className="text-center">
                         <p className="font-mono text-[8px] text-[var(--ink-3)] uppercase tracking-[1px] mb-0.5">{t.label}</p>
@@ -225,6 +230,7 @@ export function PlanProgressModal({ open, onClose, localDB, profile }: {
   const [planVersion, setPlanVersion] = useState(0);
   const plan      = open ? loadPlan() : null;
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const u         = useUnits();
 
   useEffect(() => {
     if (!open) return;
@@ -347,7 +353,8 @@ export function PlanProgressModal({ open, onClose, localDB, profile }: {
     'no-data':  { label: 'LOG WEIGHT TO TRACK',  color: 'var(--ink-3)'    },
   }[status];
 
-  const sign = (n: number) => n > 0 ? `+${n.toFixed(1)}` : n.toFixed(1);
+  // Weight deltas are stored in lb; render signed in the user's display units.
+  const sign = (lb: number) => { const n = u.fromStoredWeight(lb); return n > 0 ? `+${n.toFixed(1)}` : n.toFixed(1); };
 
   return (
     <AnimatePresence>
@@ -390,10 +397,10 @@ export function PlanProgressModal({ open, onClose, localDB, profile }: {
               <div className="grid grid-cols-4 gap-2">
                 {[
                   // Use the resolved baseline so Start + Change = Latest stays internally consistent.
-                  { label: 'Start',    value: firstWeight ? firstWeight.toFixed(1) : plan!.startWeight.toFixed(1), unit: 'lb' },
-                  { label: 'Latest',   value: latest ? latest.weight.toFixed(1) : '—', unit: latest ? 'lb' : '' },
-                  { label: 'Change',   value: actualChange !== null ? sign(actualChange) : '—', unit: actualChange !== null ? 'lb' : '', accent: true },
-                  { label: 'Expected', value: sign(expectedChange), unit: 'lb', dim: true },
+                  { label: 'Start',    value: firstWeight ? u.dispWeight(firstWeight) : u.dispWeight(plan!.startWeight), unit: u.weightUnit },
+                  { label: 'Latest',   value: latest ? u.dispWeight(latest.weight) : '—', unit: latest ? u.weightUnit : '' },
+                  { label: 'Change',   value: actualChange !== null ? sign(actualChange) : '—', unit: actualChange !== null ? u.weightUnit : '', accent: true },
+                  { label: 'Expected', value: sign(expectedChange), unit: u.weightUnit, dim: true },
                 ].map(t => (
                   <div key={t.label} className="rounded border border-[var(--line)] bg-[var(--bg-2)] p-2.5">
                     <p className="font-mono text-[8px] font-bold tracking-[1px] text-[var(--ink-3)] uppercase mb-1">{t.label}</p>
@@ -431,8 +438,8 @@ export function PlanProgressModal({ open, onClose, localDB, profile }: {
               {actualWeeklyRate !== null && (
                 <div className="rounded border border-[var(--line)] bg-[var(--bg-2)] divide-y divide-[var(--line)]">
                   {[
-                    { label: 'Actual pace', value: `${sign(actualWeeklyRate)} lb / wk`, color: status === 'ahead' ? 'var(--positive)' : status === 'behind' ? 'var(--warn)' : 'var(--ink-0)' },
-                    { label: 'Plan rate',   value: `${sign(planRate)} lb / wk`,   color: 'var(--ink-3)' },
+                    { label: 'Actual pace', value: `${sign(actualWeeklyRate)} ${u.weightUnit} / wk`, color: status === 'ahead' ? 'var(--positive)' : status === 'behind' ? 'var(--warn)' : 'var(--ink-0)' },
+                    { label: 'Plan rate',   value: `${sign(planRate)} ${u.weightUnit} / wk`,   color: 'var(--ink-3)' },
                     ...(projectedTotalWeeks !== null ? [{ label: 'At this pace', value: `~${Math.ceil(projectedTotalWeeks)} wks total`, color: 'var(--ink-1)' }] : []),
                   ].map(r => (
                     <div key={r.label} className="flex justify-between items-center px-3 py-2.5">
@@ -531,7 +538,7 @@ export function PlanProgressModal({ open, onClose, localDB, profile }: {
                       {
                         label: 'By calories',
                         value: compliance.daysLogged > 0 ? sign(compliance.calorieBasedChange) : '—',
-                        sub:   compliance.daysLogged > 0 ? 'lb implied' : '',
+                        sub:   compliance.daysLogged > 0 ? `${u.weightUnit} implied` : '',
                         color: dirColor(compliance.calorieBasedChange),
                       },
                     ].map(s => (
@@ -573,10 +580,10 @@ export function PlanProgressModal({ open, onClose, localDB, profile }: {
                         <div key={e.date} className="flex items-center justify-between px-3 py-2">
                           <span className="font-mono text-[10px] text-[var(--ink-2)]">{fmtDateLong(e.date)}</span>
                           <div className="flex items-center gap-3">
-                            <span className="font-mono text-[10px] font-bold text-[var(--ink-1)]">{e.weight.toFixed(1)} lb</span>
+                            <span className="font-mono text-[10px] font-bold text-[var(--ink-1)]">{u.fmtWeight(e.weight)}</span>
                             <span className="font-mono text-[9px] font-bold w-14 text-right"
                               style={{ color: delta === 0 ? 'var(--ink-3)' : isGood ? 'var(--positive)' : 'var(--danger)' }}>
-                              {delta === 0 ? '—' : `${sign(delta)} lb`}
+                              {delta === 0 ? '—' : `${sign(delta)} ${u.weightUnit}`}
                             </span>
                           </div>
                         </div>
@@ -635,6 +642,9 @@ export function PlanModal({ open, onClose, profile, persistProfile, m, localDB, 
   // plan and begins a fresh one (new start date) instead of editing in place.
   const [startingNew, setStartingNew] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const u = useUnits();
+  // Weight inputs are held in DISPLAY units; we convert to canonical lb only
+  // inside projData and at save, so the stored plan stays imperial.
 
   useEffect(() => {
     if (!open) return;
@@ -645,12 +655,12 @@ export function PlanModal({ open, onClose, profile, persistProfile, m, localDB, 
       // Restore the exact saved daily kcal (falls back to the intensity preset
       // for plans saved before custom values existed).
       setKcalInput(String(saved.dailyKcal || INTENSITY_KCAL[saved.intensity ?? 'moderate']));
-      setStartWeight(String(saved.startWeight));
-      setGoalWeight(String(saved.goalWeight));
+      setStartWeight(u.dispWeight(saved.startWeight));
+      setGoalWeight(u.dispWeight(saved.goalWeight));
       setGoalWeeks(String(saved.weeksTarget));
     } else {
       const tw = localDB[todayStr]?.weight ?? profile.weight;
-      setStartWeight(String(tw || ''));
+      setStartWeight(tw ? u.dispWeight(parseNum(String(tw))) : '');
       setPlanType(null); setKcalInput(String(INTENSITY_KCAL.moderate)); setGoalWeight(''); setGoalWeeks('12');
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -673,7 +683,7 @@ export function PlanModal({ open, onClose, profile, persistProfile, m, localDB, 
 
   const projData = useMemo(() => {
     if (!planType || !startWeight) return null;
-    const sw = parseNum(startWeight);
+    const sw = u.toStoredWeight(parseNum(startWeight)); // display → canonical lb
     if (sw <= 0) return null;
     const kcal         = Math.round(parseNum(kcalInput));
     if (kcal <= 0) return null;
@@ -690,7 +700,7 @@ export function PlanModal({ open, onClose, profile, persistProfile, m, localDB, 
     if (weeklyRate === 0) return null;
     let weeks: number; let gw: number; let weeksNeeded: number | null = null;
     if (goalMode === 'weight') {
-      gw = parseNum(goalWeight); if (gw <= 0) return null;
+      gw = u.toStoredWeight(parseNum(goalWeight)); if (gw <= 0) return null; // display → canonical lb
       // Skip projection when the goal direction is wrong — the UI shows a
       // dedicated validation error instead.
       if (planType === 'cut'  && gw >= sw) return null;
@@ -723,7 +733,7 @@ export function PlanModal({ open, onClose, profile, persistProfile, m, localDB, 
       if (rounded > kcal && rounded <= 1500) suggestedKcal = rounded;
     }
     return { pts, weeks, startWeight: sw, goalWeight: gw, weeklyRate, effective, kcal, cardioAdjust, weeksNeeded, wasCapped, suggestedKcal };
-  }, [planType, kcalInput, startWeight, goalMode, goalWeight, goalWeeks, m.activityBurn]);
+  }, [planType, kcalInput, startWeight, goalMode, goalWeight, goalWeeks, m.activityBurn, u]);
 
   const actualData = useMemo(() => {
     const saved = loadPlan(); if (!saved) return [];
@@ -738,8 +748,11 @@ export function PlanModal({ open, onClose, profile, persistProfile, m, localDB, 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !projData || !open) return;
-    drawPlanChart(canvas, projData.pts, actualData, planType!, projData.goalWeight);
-  }, [projData, actualData, open, planType]);
+    // Chart math is in canonical lb; convert the plotted series to display units.
+    const ptsDisp    = projData.pts.map(p => u.fromStoredWeight(p));
+    const actualDisp = actualData.map(d => ({ week: d.week, weight: u.fromStoredWeight(d.weight) }));
+    drawPlanChart(canvas, ptsDisp, actualDisp, planType!, u.fromStoredWeight(projData.goalWeight));
+  }, [projData, actualData, open, planType, u]);
 
   const handleSave = useCallback(() => {
     if (!projData || !planType) return;
@@ -794,9 +807,9 @@ export function PlanModal({ open, onClose, profile, persistProfile, m, localDB, 
     setPlanType(null);
     setKcalInput(String(INTENSITY_KCAL.moderate));
     const tw = localDB[todayStr]?.weight ?? profile.weight;
-    setStartWeight(String(tw || ''));
+    setStartWeight(tw ? u.dispWeight(parseNum(String(tw))) : '');
     setGoalWeight(''); setGoalWeeks('12'); setGoalMode('weight');
-  }, [localDB, todayStr, profile.weight]);
+  }, [localDB, todayStr, profile.weight, u]);
 
   return (
     <AnimatePresence>
@@ -935,9 +948,9 @@ export function PlanModal({ open, onClose, profile, persistProfile, m, localDB, 
               })()}
 
               <div className="mb-3">
-                <label className="que-label">Starting Weight / lbs</label>
+                <label className="que-label">Starting Weight / {u.weightUnit}</label>
                 <input type="number" inputMode="decimal" className="que-input"
-                  value={startWeight} onChange={e => setStartWeight(e.target.value)} placeholder="lbs" />
+                  value={startWeight} onChange={e => setStartWeight(e.target.value)} placeholder={u.weightUnit} />
               </div>
 
               <p className="que-label mb-2">Goal</p>
@@ -955,10 +968,10 @@ export function PlanModal({ open, onClose, profile, persistProfile, m, localDB, 
               </div>
               {goalMode === 'weight' ? (
                 <div className="mb-4">
-                  <label className="que-label">Goal Weight / lbs</label>
+                  <label className="que-label">Goal Weight / {u.weightUnit}</label>
                   <input type="number" inputMode="decimal" className="que-input"
                     value={goalWeight} onChange={e => setGoalWeight(e.target.value)}
-                    placeholder={planType === 'cut' ? 'e.g. 175' : 'e.g. 195'} />
+                    placeholder={u.isMetric ? (planType === 'cut' ? 'e.g. 79' : 'e.g. 88') : (planType === 'cut' ? 'e.g. 175' : 'e.g. 195')} />
                 </div>
               ) : (
                 <div className="mb-4">
@@ -972,9 +985,9 @@ export function PlanModal({ open, onClose, profile, persistProfile, m, localDB, 
                 <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mb-4">
                   <div className="grid grid-cols-3 gap-2 mb-2">
                     {[
-                      { label: 'Per Week', value: `${projData.weeklyRate > 0 ? '+' : ''}${Math.abs(projData.weeklyRate).toFixed(2)} lbs`, color: projData.weeklyRate < 0 ? 'var(--accent)' : 'var(--positive)' },
+                      { label: 'Per Week', value: `${projData.weeklyRate > 0 ? '+' : ''}${u.fromStoredWeight(Math.abs(projData.weeklyRate)).toFixed(2)} ${u.weightUnit}`, color: projData.weeklyRate < 0 ? 'var(--accent)' : 'var(--positive)' },
                       { label: 'Duration', value: `${projData.weeks} wks`, color: 'var(--ink-0)' },
-                      { label: 'Goal',     value: `${projData.goalWeight.toFixed(1)} lb`, color: 'var(--ink-0)' },
+                      { label: 'Goal',     value: u.fmtWeight(projData.goalWeight), color: 'var(--ink-0)' },
                     ].map(s => (
                       <div key={s.label} className="rounded border border-[var(--line)] bg-[var(--bg-2)] p-2.5 md:p-3">
                         <p className="font-mono text-[8px] md:text-[9px] font-bold tracking-[1px] text-[var(--ink-3)] uppercase mb-1">{s.label}</p>
@@ -1050,8 +1063,8 @@ export function PlanModal({ open, onClose, profile, persistProfile, m, localDB, 
                 <div className="mb-4 rounded border border-[var(--danger)]/40 bg-[var(--danger)]/8 px-3 py-3">
                   <p className="font-mono text-[10px] text-[var(--danger)] tracking-[0.5px] leading-relaxed">
                     {goalDirectionError === 'cut-goal-too-high'
-                      ? `Cut goal must be lower than starting weight. Set a target below ${parseNum(startWeight).toFixed(1)} lb, or switch to Bulk.`
-                      : `Bulk goal must be higher than starting weight. Set a target above ${parseNum(startWeight).toFixed(1)} lb, or switch to Cut.`}
+                      ? `Cut goal must be lower than starting weight. Set a target below ${parseNum(startWeight).toFixed(1)} ${u.weightUnit}, or switch to Bulk.`
+                      : `Bulk goal must be higher than starting weight. Set a target above ${parseNum(startWeight).toFixed(1)} ${u.weightUnit}, or switch to Cut.`}
                   </p>
                 </div>
               ) : planType === 'bulk' && m.activityBurn * 0.4 >= Math.round(parseNum(kcalInput)) ? (
@@ -1083,7 +1096,7 @@ export function PlanModal({ open, onClose, profile, persistProfile, m, localDB, 
                       <div>
                         <p className="font-mono text-[9px] tracking-[1.5px] text-[var(--ink-3)] uppercase mb-1">Latest Weight</p>
                         <p className="font-display text-[24px] text-[var(--ink-0)] leading-none">
-                          {latest.toFixed(1)}<span className="font-mono text-[12px] text-[var(--ink-2)] ml-1">lbs</span>
+                          {u.dispWeight(latest)}<span className="font-mono text-[12px] text-[var(--ink-2)] ml-1">{u.weightUnit}</span>
                         </p>
                       </div>
                       <div>
@@ -1091,7 +1104,7 @@ export function PlanModal({ open, onClose, profile, persistProfile, m, localDB, 
                           Total {planType === 'cut' ? 'Lost' : 'Gained'}
                         </p>
                         <p className="font-display text-[24px] leading-none" style={{ color: isGood ? 'var(--positive)' : 'var(--danger)' }}>
-                          {delta > 0 ? '+' : ''}{delta.toFixed(1)}<span className="font-mono text-[12px] text-[var(--ink-2)] ml-1">lbs</span>
+                          {delta > 0 ? '+' : ''}{u.fromStoredWeight(delta).toFixed(1)}<span className="font-mono text-[12px] text-[var(--ink-2)] ml-1">{u.weightUnit}</span>
                         </p>
                       </div>
                     </div>
@@ -1126,6 +1139,7 @@ export function ProjectionModal({ open, m, weightLbs, calsEaten, localDB, onClos
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const ptsRef    = useRef<number[]>([]);
   const [selDay, setSelDay] = useState<number | null>(null);
+  const u = useUnits();
 
   const plan = open ? loadPlan() : null;
 
@@ -1312,9 +1326,9 @@ export function ProjectionModal({ open, m, weightLbs, calsEaten, localDB, onClos
                       className="font-display text-[32px] leading-none"
                       style={{ color: projDelta30 <= 0 ? 'var(--accent)' : 'var(--danger)' }}
                     >
-                      {weight30.toFixed(1)}
+                      {u.dispWeight(weight30)}
                     </span>
-                    <span className="font-display text-[16px] text-[var(--ink-2)]">lbs</span>
+                    <span className="font-display text-[16px] text-[var(--ink-2)]">{u.weightUnit}</span>
                   </div>
                 </div>
                 <div className="text-right flex-shrink-0">
@@ -1322,9 +1336,9 @@ export function ProjectionModal({ open, m, weightLbs, calsEaten, localDB, onClos
                     className="font-display text-[26px] leading-none"
                     style={{ color: projDelta30 <= 0 ? 'var(--accent)' : 'var(--danger)' }}
                   >
-                    {projDelta30 > 0 ? '+' : ''}{projDelta30.toFixed(1)}
+                    {projDelta30 > 0 ? '+' : ''}{u.fromStoredWeight(projDelta30).toFixed(1)}
                   </p>
-                  <p className="font-mono text-[8px] text-[var(--ink-3)] tracking-[0.5px] mt-0.5">lbs change</p>
+                  <p className="font-mono text-[8px] text-[var(--ink-3)] tracking-[0.5px] mt-0.5">{u.weightUnit} change</p>
                 </div>
               </div>
             )}
@@ -1344,16 +1358,16 @@ export function ProjectionModal({ open, m, weightLbs, calsEaten, localDB, onClos
                     <div className="flex items-baseline gap-2">
                       <span className="font-display tabular text-[36px] leading-none text-[var(--ink-0)]"
                         style={{ textShadow: '0 0 20px var(--accent-40)' }}>
-                        {info.wt.toFixed(1)}
+                        {u.dispWeight(info.wt)}
                       </span>
-                      <span className="font-display text-[18px] text-[var(--ink-2)]">lbs</span>
+                      <span className="font-display text-[18px] text-[var(--ink-2)]">{u.weightUnit}</span>
                     </div>
                   </div>
                   <div className="text-right flex-shrink-0">
                     <p className={`font-display text-[24px] leading-none ${info.delta <= 0 ? 'text-[var(--positive)]' : 'text-[var(--danger)]'}`}>
-                      {info.delta > 0 ? '+' : ''}{info.delta.toFixed(1)}
+                      {info.delta > 0 ? '+' : ''}{u.fromStoredWeight(info.delta).toFixed(1)}
                     </p>
-                    <p className="font-mono text-[9px] text-[var(--ink-3)] mt-1 tracking-[1px] uppercase">lbs from now</p>
+                    <p className="font-mono text-[9px] text-[var(--ink-3)] mt-1 tracking-[1px] uppercase">{u.weightUnit} from now</p>
                   </div>
                 </motion.div>
               ) : (
@@ -1419,6 +1433,7 @@ interface TimelineEntry {
 }
 
 function PlanRow({ e }: { e: TimelineEntry }) {
+  const u      = useUnits();
   const accent = e.type === 'cut' ? 'var(--accent)' : 'var(--positive)';
   const bg     = e.type === 'cut' ? 'var(--accent-12)' : 'var(--positive-12)';
   const change = e.endWeight !== null ? e.endWeight - e.startWeight : null;
@@ -1439,13 +1454,13 @@ function PlanRow({ e }: { e: TimelineEntry }) {
         {fmtShortDate(e.startDate)} → {e.active ? 'now' : fmtShortDate(e.endDate)} · {label} · {fmt(e.dailyKcal)} kcal
       </p>
       <div className="flex items-center gap-2 font-mono text-[12px] tabular-nums">
-        <span className="text-[var(--ink-1)]">{e.startWeight.toFixed(1)}</span>
+        <span className="text-[var(--ink-1)]">{u.dispWeight(e.startWeight)}</span>
         <span className="text-[var(--ink-3)]">→</span>
-        <span className="text-[var(--ink-0)] font-bold">{e.endWeight !== null ? e.endWeight.toFixed(1) : '—'}</span>
-        <span className="text-[var(--ink-3)] text-[10px]">lb</span>
+        <span className="text-[var(--ink-0)] font-bold">{e.endWeight !== null ? u.dispWeight(e.endWeight) : '—'}</span>
+        <span className="text-[var(--ink-3)] text-[10px]">{u.weightUnit}</span>
         {change !== null && (
           <span className="ml-auto font-bold" style={{ color: change <= 0 ? 'var(--positive)' : 'var(--accent)' }}>
-            {change > 0 ? '+' : ''}{change.toFixed(1)} lb
+            {change > 0 ? '+' : ''}{u.fromStoredWeight(change).toFixed(1)} {u.weightUnit}
           </span>
         )}
       </div>

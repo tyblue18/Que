@@ -37,7 +37,7 @@ import {
   ATHLETE_PLAN_KEY, PLAN_HISTORY_KEY, WORKOUT_PRESETS_KEY, TEMPLATES_KEY, EXERCISE_USAGE_KEY,
   CUSTOM_EXERCISES_KEY,
   LAST_STREAK_KEY, LIFT_PRS_KEY, MILLION_GROUPS_KEY, MACRO_GOALS_KEY,
-  COIN_KEY, PROFILE_PHOTO_KEY, DB_KEY, PENDING_BADGE_POPUPS_KEY,
+  COIN_KEY, PROFILE_PHOTO_KEY, UNITS_KEY, DB_KEY, PENDING_BADGE_POPUPS_KEY,
 } from '@/lib/constants';
 
 type EarnedBadge = { slug: string; label: string; icon: string; category: string };
@@ -78,6 +78,7 @@ const SETTINGS_KEYS = [
   MACRO_GOALS_KEY,         // macro targets — sync across devices
   COIN_KEY,                // coin balance — used for battle wagering later
   PROFILE_PHOTO_KEY,       // profile photo URL (Vercel Blob) or base64 fallback
+  UNITS_KEY,               // imperial/metric display preference — synced across devices
 ] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────

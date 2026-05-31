@@ -7,6 +7,7 @@ import { useApp } from '@/lib/AppContext';
 import { GOAL_TOLERANCE, WEIGHT_PROMPT_KEY, WEIGHT_SKIP_KEY } from '@/lib/constants';
 import { computeBaseBudget, loadCoins } from '@/lib/calorie-utils';
 import { toDateStr } from '@/lib/metricsTypes';
+import { useUnits, kgToLb } from '@/lib/units';
 
 function fmt(n: number) {
   return n.toLocaleString();
@@ -21,6 +22,7 @@ const SKIP_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
 export function MorningWeightPrompt() {
   const { localDB, profile, updateDayRecord, persistProfile, getLastKnownWeight } = useApp();
+  const u = useUnits();
 
   // Live "today" — AppContext derives today/todayStr once at mount and never
   // refreshes them. On a mobile PWA the page is frozen and resumed (not remounted),
@@ -66,7 +68,7 @@ export function MorningWeightPrompt() {
     if (Number.isFinite(skipAt) && Date.now() - skipAt < SKIP_COOLDOWN_MS) return; // recently skipped — still snoozing
     setNow(new Date()); // refresh recap/streak/greeting to the real current day
     const last = getLastKnownWeightRef.current(liveStr);
-    if (last) setWeight(last);
+    if (last) setWeight(u.dispWeight(parseFloat(last))); // stored lb → display units
     setOpen(true);
   };
 
@@ -96,8 +98,10 @@ export function MorningWeightPrompt() {
     const liveStr  = toDateStr(new Date());
     const didEnter = saveWeight && weight && parseFloat(weight) > 0;
     if (didEnter) {
-      updateDayRecord(liveStr, { weight });
-      persistProfile({ weight });
+      // Convert the entered display value to canonical lb for storage.
+      const wStored = u.isMetric ? kgToLb(parseFloat(weight)).toFixed(1) : weight;
+      updateDayRecord(liveStr, { weight: wStored });
+      persistProfile({ weight: wStored });
       // Logging weight makes localDB[liveStr].weight truthy, which suppresses the
       // prompt for the rest of the day.
     } else {
@@ -319,7 +323,7 @@ export function MorningWeightPrompt() {
 
               {/* ── Today's weight ── */}
               <div>
-                <label className="que-label">Today's Weight / lbs</label>
+                <label className="que-label">Today's Weight / {u.weightUnit}</label>
                 <input
                   ref={inputRef}
                   type="number"
@@ -331,7 +335,7 @@ export function MorningWeightPrompt() {
                     if (e.key === 'Enter')  dismiss(true);
                     if (e.key === 'Escape') dismiss(false);
                   }}
-                  placeholder="e.g. 180"
+                  placeholder={u.isMetric ? 'e.g. 82' : 'e.g. 180'}
                 />
               </div>
 

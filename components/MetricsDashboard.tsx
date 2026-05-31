@@ -27,6 +27,7 @@ import {
   dayMaintenance, parseNum, fmt, fmtDateLong, toDateStr,
 } from '@/lib/metricsTypes';
 import { drawLineChart } from '@/lib/metricsCharts';
+import { useUnits, kgToLb, cmToIn } from '@/lib/units';
 import {
   MilestoneModal, CelebrationModal, PlanProgressModal, PlanModal, ProjectionModal, PlanHistoryModal,
 } from '@/components/metrics/MetricsModals';
@@ -97,6 +98,16 @@ function ProfilePanel({ profile, onChange, onOpenPlan, onOpenRunPlan, onOpenHist
   onOpenHistory: () => void;
 }) {
   const hasPlanHistory = typeof window !== 'undefined' && loadPlanHistory().length > 0;
+  const u = useUnits();
+  // Weight/height edit through local display state and commit (convert → store)
+  // on blur — avoids the round-trip jank a live-converted controlled input has.
+  const [wInput, setWInput] = useState('');
+  const [hInput, setHInput] = useState('');
+  useEffect(() => { setWInput(profile.weight ? u.dispWeight(parseNum(profile.weight)) : ''); }, [profile.weight, u.system]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setHInput(profile.height ? u.dispHeight(parseNum(profile.height), 1) : ''); }, [profile.height, u.system]); // eslint-disable-line react-hooks/exhaustive-deps
+  const commitWeight = () => { const n = parseNum(wInput); if (n > 0) onChange({ weight: u.isMetric ? kgToLb(n).toFixed(1) : String(n) }); };
+  const commitHeight = () => { const n = parseNum(hInput); if (n > 0) onChange({ height: u.isMetric ? cmToIn(n).toFixed(1) : String(n) }); };
+
   const activityOptions = [
     { value: '1.20', label: 'Desk job, no gym (×1.20)' },
     { value: '1.30', label: 'Desk job + light activity (×1.30)' },
@@ -116,21 +127,40 @@ function ProfilePanel({ profile, onChange, onOpenPlan, onOpenRunPlan, onOpenHist
           <span className="text-[var(--ink-2)]">Budget = TDEE − Deficit + 60% eat-back.</span>
         </div>
 
+        {/* Units toggle — switches every weight/height/distance across the app. */}
+        <div className="flex items-center justify-between mb-3">
+          <span className="que-label">Units</span>
+          <div className="flex rounded-md border border-[var(--line-2)] overflow-hidden">
+            {(['imperial', 'metric'] as const).map(sys => (
+              <button
+                key={sys} type="button" onClick={() => u.setSystem(sys)}
+                className={[
+                  'px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-[1px] transition-colors',
+                  u.system === sys ? 'bg-[var(--accent-12)] text-[var(--accent)]' : 'bg-[var(--bg-2)] text-[var(--ink-3)]',
+                ].join(' ')}
+              >
+                {sys === 'imperial' ? 'lb / in' : 'kg / cm'}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          {[
-            { label: 'Weight / lbs', field: 'weight' as const },
-            { label: 'Height / in',  field: 'height' as const },
-            { label: 'Age',          field: 'age'    as const },
-          ].map(({ label, field }) => (
-            <div key={field}>
-              <label className="que-label">{label}</label>
-              <input
-                type="number" className="que-input"
-                value={profile[field]}
-                onChange={e => onChange({ [field]: e.target.value })}
-              />
-            </div>
-          ))}
+          <div>
+            <label className="que-label">Weight / {u.weightUnit}</label>
+            <input type="number" inputMode="decimal" className="que-input"
+              value={wInput} onChange={e => setWInput(e.target.value)} onBlur={commitWeight} />
+          </div>
+          <div>
+            <label className="que-label">Height / {u.heightUnit}</label>
+            <input type="number" inputMode="decimal" className="que-input"
+              value={hInput} onChange={e => setHInput(e.target.value)} onBlur={commitHeight} />
+          </div>
+          <div>
+            <label className="que-label">Age</label>
+            <input type="number" className="que-input"
+              value={profile.age} onChange={e => onChange({ age: e.target.value })} />
+          </div>
 
           <div>
             <label className="que-label">Sex</label>
@@ -290,6 +320,7 @@ function CalorieBudgetCard({ m, onOpenProgress, prFlags }: {
 }) {
   const spotlight = useSpotlightBorder({ color: '79,195,247', size: 280, opacity: 0.55 });
   const { updateDayRecord, getDayRecord, localDB, activeDayFocus, profile } = useApp();
+  const u = useUnits();
 
   const calsEaten  = parseNum(String(localDB[activeDayFocus]?.calsEaten ?? 0));
   const remaining  = m.budget - calsEaten;
@@ -666,8 +697,8 @@ function CalorieBudgetCard({ m, onOpenProgress, prFlags }: {
               <div className="grid grid-cols-4 gap-2">
                 {[
                   { label: 'Week',     value: `${Math.ceil(weeksSince)}/${plan.weeksTarget}`, color: 'var(--ink-0)' },
-                  { label: 'Proj Now', value: `${projNow.toFixed(1)} lb`,                    color: planAccent      },
-                  { label: 'Goal',     value: `${plan.goalWeight.toFixed(1)} lb`,             color: planAccent      },
+                  { label: 'Proj Now', value: u.fmtWeight(projNow),                          color: planAccent      },
+                  { label: 'Goal',     value: u.fmtWeight(plan.goalWeight),                  color: planAccent      },
                   { label: 'Left',     value: `${Math.ceil(weeksLeft)} wks`,                  color: 'var(--ink-0)' },
                 ].map(s => (
                   <div key={s.label}>
@@ -1079,6 +1110,7 @@ type TrendKey = 'weight' | 'burn' | 'budget' | 'runDist' | 'bikeDist' | 'swimTim
 
 function TrendsCard() {
   const { localDB } = useApp();
+  const u = useUnits();
   const [activeTab, setActiveTab] = useState<TrendKey>('weight');
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -1113,14 +1145,16 @@ function TrendsCard() {
     });
     const values = keys.map(ds => {
       const rec = localDB[ds];
-      if (activeTab === 'weight')   return parseFloat(String(rec?.weight   ?? '0')) || 0;
+      // Weight converts to the user's display units; distance stays imperial for now.
+      if (activeTab === 'weight')   return u.fromStoredWeight(parseFloat(String(rec?.weight   ?? '0')) || 0);
       if (activeTab === 'burn')     return Number(rec?.burn)                        || 0;
       if (activeTab === 'runDist')  return parseFloat(String(rec?.runDist  ?? '0')) || 0;
       if (activeTab === 'bikeDist') return parseFloat(String(rec?.bikeDist ?? '0')) || 0;
       if (activeTab === 'swimTime') return parseFloat(String(rec?.swimTime ?? '0')) || 0;
       return Number(rec?.budget) || 0;
     });
-    const { color, unit } = chartConfig[activeTab];
+    const { color } = chartConfig[activeTab];
+    const unit = activeTab === 'weight' ? ` ${u.weightUnit}` : chartConfig[activeTab].unit;
 
     const rollingAvg = activeTab === 'weight' ? values.map((_, i) => {
       const win = values.slice(Math.max(0, i - 6), i + 1).filter(v => v > 0);
@@ -1128,7 +1162,7 @@ function TrendsCard() {
     }) : undefined;
 
     drawLineChart(canvas, labels, values, color, unit, rollingAvg);
-  }, [localDB, activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [localDB, activeTab, u]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="que-card mb-4">
