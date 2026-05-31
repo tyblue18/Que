@@ -153,7 +153,11 @@ export function RestTimerProvider({ children }: { children: React.ReactNode }) {
       const e = arr[t.exIndex];
       if (e && e.k === 'lift') {
         const sets = Array.isArray(e.sets) && e.sets.length ? [...e.sets] : normalizeSets(e);
-        sets.push({ r: reps || '1', w: weight });
+        // Mirror WorkoutLogger.logRestSet: fill the first placeholder set
+        // (reps still at the default 1) before appending a new one.
+        const ph = sets.findIndex(s => String(s.r) === '1');
+        const next = { r: reps || '1', w: weight };
+        if (ph >= 0) sets[ph] = next; else sets.push(next);
         arr[t.exIndex] = { ...e, sets };
         updateDayRecord(t.date, { exercises: serializeEx(arr) });
       }

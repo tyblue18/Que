@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/resolve-battles",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/social-nudge",
+      "schedule": "0 17 * * *"
     }
   ]
 }

@@ -85,6 +85,10 @@ export interface DayRecord {
   swimDist?: string | number;
   exercises?: string;  // JSON-serialised ExerciseEntry[]
   notes?:    string;
+  /** Post-session self-report captured on Commit Session (1–10). Used for
+   *  Metrics trends — training quality + how the athlete felt. */
+  sessRating?: number; // session quality, 1–10
+  sessFeel?:   number; // how they felt, 1–10
   weight?:   string;
   burn?:     number;
   budget?:   number;

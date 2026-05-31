@@ -1114,7 +1114,7 @@ function CalorieHistoryCard({ streak, avgNet, days, cutting }: {
 // SUB-COMPONENT — TrendsCard
 // ─────────────────────────────────────────────────────────────────────────────
 
-type TrendKey = 'weight' | 'burn' | 'budget' | 'runDist' | 'bikeDist' | 'swimTime';
+type TrendKey = 'weight' | 'burn' | 'budget' | 'runDist' | 'bikeDist' | 'swimTime' | 'sessRating' | 'sessFeel';
 
 function TrendsCard() {
   const { localDB } = useApp();
@@ -1129,6 +1129,8 @@ function TrendsCard() {
     runDist:  { label: 'RUN',    color: '#F87171', unit: ' mi'   },
     bikeDist: { label: 'BIKE',   color: '#A78BFA', unit: ' mi'   },
     swimTime: { label: 'SWIM',   color: '#34D399', unit: ' min'  },
+    sessRating: { label: 'RATING', color: '#FFD23F', unit: ' /10' },
+    sessFeel:   { label: 'FEEL',   color: '#F472B6', unit: ' /10' },
   };
 
   useEffect(() => {
@@ -1159,6 +1161,8 @@ function TrendsCard() {
       if (activeTab === 'runDist')  return u.fromStoredDistance(parseFloat(String(rec?.runDist  ?? '0')) || 0);
       if (activeTab === 'bikeDist') return u.fromStoredDistance(parseFloat(String(rec?.bikeDist ?? '0')) || 0);
       if (activeTab === 'swimTime') return parseFloat(String(rec?.swimTime ?? '0')) || 0;
+      if (activeTab === 'sessRating') return Number(rec?.sessRating) || 0;
+      if (activeTab === 'sessFeel')   return Number(rec?.sessFeel)   || 0;
       return Number(rec?.budget) || 0;
     });
     const { color } = chartConfig[activeTab];

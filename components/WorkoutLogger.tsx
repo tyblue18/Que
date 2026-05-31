@@ -33,6 +33,7 @@ import { ExerciseHistoryModal } from '@/components/ExerciseHistory';
 import { parseEx, serializeEx, normalizeSets } from '@/lib/exerciseSerial';
 import { useUnits } from '@/lib/units';
 import { useRestTimer, DEFAULT_REST_MS } from '@/lib/RestTimerContext';
+import { SessionRatingModal } from '@/components/workout/SessionRatingModal';
 import { trackEvent } from '@/lib/telemetry';
 import { queueSync, pushNow, gatherSettings } from '@/lib/syncEngine';
 import Lottie from 'lottie-react';
@@ -937,6 +938,7 @@ export default function WorkoutLogger() {
   const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [saveFlash, setSaveFlash] = useState(false);
   const [loggedFlash, setLoggedFlash] = useState(false);
+  const [showSessionRating, setShowSessionRating] = useState(false);
   const [templateModal, setTemplateModal] = useState(false);
   const [saveModal, setSaveModal] = useState(false);
   const [historyEx, setHistoryEx] = useState<string | null>(null);
@@ -1264,7 +1266,12 @@ export default function WorkoutLogger() {
     setExercises(curr.map((e, i) => {
       if (i !== idx) return e;
       const sets = Array.isArray(e.sets) && e.sets.length ? [...e.sets] : normalizeSets(e);
-      sets.push({ r: reps || '1', w: weight });
+      // The form commits N sets at the placeholder reps=1; the user does each
+      // set, then logs the real reps via the bar. So FILL the first still-at-1
+      // set rather than appending — only append once every set is filled.
+      const ph = sets.findIndex(s => String(s.r) === '1');
+      const next = { r: reps || '1', w: weight };
+      if (ph >= 0) sets[ph] = next; else sets.push(next);
       return { ...e, sets };
     }));
   }, [setExercises]);
@@ -1515,6 +1522,11 @@ export default function WorkoutLogger() {
     persistExercises(exercises, notes);
     setLoggedFlash(true);
     setTimeout(() => setLoggedFlash(false), 2200);
+    // Prompt the post-session check-in (rating / feel / notes) — only when
+    // there's an actual workout to rate.
+    if (exercises.some(e => e.k === 'lift' || e.k === 'run' || e.k === 'bike' || e.k === 'swim')) {
+      setShowSessionRating(true);
+    }
   }, [exercises, notes, persistExercises]);
 
   const loadPreset = useCallback((preset: WorkoutPreset, replace: boolean) => {
@@ -2658,6 +2670,11 @@ export default function WorkoutLogger() {
           >
             {loggedFlash ? '✓ LOGGED' : 'COMMIT SESSION'}
           </button>
+          {/* Plain-language explanation of what committing does. */}
+          <p className="mt-2 font-mono text-[10px] text-[var(--ink-3)] leading-relaxed text-center tracking-[0.3px]">
+            Saves this workout to {dayLabel === 'TODAY' ? "today's" : 'this'} log — updating your streak, PRs, weekly volume,
+            and battle stats. You&apos;ll get a quick 1–10 check-in after, and you can edit any logged day anytime.
+          </p>
 
         </div>
       </div>
@@ -2666,6 +2683,26 @@ export default function WorkoutLogger() {
         name={historyEx}
         open={historyEx !== null}
         onClose={() => setHistoryEx(null)}
+      />
+
+      {/* Post-session check-in (rating / feel / notes), tracked for trends. */}
+      <SessionRatingModal
+        open={showSessionRating}
+        initial={{
+          rating: Number(localDB[activeDayFocus]?.sessRating ?? 0),
+          feel:   Number(localDB[activeDayFocus]?.sessFeel ?? 0),
+          notes,
+        }}
+        onClose={() => setShowSessionRating(false)}
+        onSave={({ rating, feel, notes: n }) => {
+          updateDayRecord(activeDayFocus, {
+            ...(rating > 0 && { sessRating: rating }),
+            ...(feel > 0 && { sessFeel: feel }),
+            notes: n,
+          });
+          setNotesRaw(n);
+          setShowSessionRating(false);
+        }}
       />
 
       {/* Badge earned modal — centered, celebrate animation, haptic */}

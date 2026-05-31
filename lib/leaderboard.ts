@@ -92,10 +92,14 @@ async function rankAll(categorySlug: string, start: string, end: string): Promis
 }
 
 /**
- * Build the leaderboard for a category. `meUsername` is the requester's username
- * ONLY when they're opted in (so their row is findable); pass null otherwise.
+ * The full ranked field for a category's current season (cached). Shared by the
+ * API endpoint and the social-nudge cron so neither recomputes per request.
  */
-export async function getLeaderboard(categorySlug: string, meUsername: string | null): Promise<LeaderboardResult> {
+export async function getSeasonRankings(categorySlug: string): Promise<{
+  category: string;
+  season:   { start: string; end: string; daysLeft: number };
+  ranked:   Array<RankedRow & { rank: number }>;
+}> {
   const slug   = isLeaderboardCategory(categorySlug) ? categorySlug : DEFAULT_LEADERBOARD_CATEGORY;
   const season = currentSeason();
   const key    = `lb:v1:${slug}:${season.start}`;
@@ -106,13 +110,21 @@ export async function getLeaderboard(categorySlug: string, meUsername: string | 
     ranked = await rankAll(slug, season.start, season.end);
     try { await redis.setex(key, CACHE_TTL_S, JSON.stringify(ranked)); } catch { /* ignore */ }
   }
+  return { category: slug, season, ranked: assignRanks(ranked) };
+}
 
-  const withRank = assignRanks(ranked);
-  const top = withRank.slice(0, TOP_N).map(r => ({ rank: r.rank, username: r.username, score: r.score, me: r.username === meUsername }));
-  const mine = meUsername ? withRank.find(r => r.username === meUsername) : undefined;
+/**
+ * Build the leaderboard for a category. `meUsername` is the requester's username
+ * ONLY when they're opted in (so their row is findable); pass null otherwise.
+ */
+export async function getLeaderboard(categorySlug: string, meUsername: string | null): Promise<LeaderboardResult> {
+  const { category, season, ranked } = await getSeasonRankings(categorySlug);
+
+  const top  = ranked.slice(0, TOP_N).map(r => ({ rank: r.rank, username: r.username, score: r.score, me: r.username === meUsername }));
+  const mine = meUsername ? ranked.find(r => r.username === meUsername) : undefined;
 
   return {
-    category:    slug,
+    category,
     seasonStart: season.start,
     seasonEnd:   season.end,
     daysLeft:    season.daysLeft,
