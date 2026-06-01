@@ -10,7 +10,7 @@ import { useApp } from '@/lib/AppContext';
 import type { FoodEntry, UserProfile } from '@/lib/AppContext';
 import { recordFood } from '@/lib/foodUsage';
 import { trackEvent } from '@/lib/telemetry';
-import { computeBaseBudget, loadCoins, saveCoins, isGoalDay, dayMaintenanceFromRecord, type PlanDirection, type CoinData } from '@/lib/calorie-utils';
+import { computeBaseBudget, loadCoins, saveCoins, isGoalDay, hitGoal, dayMaintenanceFromRecord, type PlanDirection, type CoinData } from '@/lib/calorie-utils';
 import {
   DonutChart, MacroBar, MacroGoalModal,
   type MacroGoals, loadMacroGoals, saveMacroGoals, getBaseline,
@@ -471,11 +471,16 @@ export default function CalorieTracker() {
   const budget      = liveMetrics.budget || baseBudget;
   const proteinTarget = Math.round(parseFloat(profile.weight) * 0.8) || 0;
 
-  // Plan-aware goal: on a cut/bulk, being under/over true maintenance counts
-  // (not just the ±100 band). loadPlan() is a cheap localStorage read.
   const planDir         = (loadPlan()?.type ?? null) as PlanDirection;
   const liveMaintenance = liveMetrics.tdee + liveMetrics.activityBurn;
-  const todayGoalHit = isGoalDay(totals.kcal, budget, liveMaintenance, planDir);
+  // LIVE "at goal" indicator + the real-time coin/celebration use the PRECISE
+  // ±100-of-budget band (budget already encodes cut/bulk via the signed deficit).
+  // The broad plan-aware predicate (cut = anything under maintenance, bulk = over)
+  // is deliberately NOT used here: it spans ~40–100% of maintenance, which made
+  // the "goal met" popup fire mid-entry at any modest intake (e.g. 1223 kcal).
+  // That broad rule still governs the deliberate "Log Today" commit (handleLogToday)
+  // and the server-side coin/badge economy (isGoalDay) — those are unchanged.
+  const todayGoalHit = hitGoal(totals.kcal, budget);
 
   // Sync weight from the active day's record on load / date change
   useEffect(() => {
