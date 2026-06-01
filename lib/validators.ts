@@ -185,3 +185,10 @@ export const foodSearchSchema = z.object({
 export const feedbackSchema = z.object({
   message: z.string().trim().min(1).max(1000),
 });
+
+// ── /api/food/parse POST (natural-language meal → structured items) ─────────────
+// Input is capped tight: this feeds an LLM, so the bound is a cost ceiling, not
+// just hygiene. One short sentence is all the feature needs.
+export const foodParseSchema = z.object({
+  text: z.string().trim().min(1).max(300),
+});

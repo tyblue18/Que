@@ -11,6 +11,8 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['lib/**/*.test.ts'],
+    // lib/ holds the pure-engine tests; app/api/ holds route-handler tests
+    // (e.g. the food-parse grounding contract).
+    include: ['lib/**/*.test.ts', 'app/**/*.test.ts'],
   },
 });

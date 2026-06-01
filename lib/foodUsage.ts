@@ -71,15 +71,20 @@ export function recordFood(
   const key = buildKey(food.name, food.brand);
   const map = load();
   const prev = map[key];
-  // Use the freshest macro values — a corrected entry replaces an older one.
+  // food.kcal/protein/... arrive ALREADY multiplied by food.servings (the meal
+  // log stores the consumed total). Recents must store PER-SERVING macros: the
+  // picker re-adds via usageToOFF → perServing, which re-multiplies by the
+  // servings the user picks. Storing the total here double-counts (log 2 bars,
+  // re-add 1 → shows 2 bars' macros). Divide back out by servings (guard ≤0).
+  const per = food.servings && food.servings > 0 ? food.servings : 1;
   map[key] = {
     key,
     name:        food.name,
     brand:       food.brand,
-    kcal:        food.kcal,
-    protein:     food.protein,
-    carbs:       food.carbs,
-    fat:         food.fat,
+    kcal:        Math.round(food.kcal / per),
+    protein:     Math.round((food.protein / per) * 10) / 10,
+    carbs:       Math.round((food.carbs   / per) * 10) / 10,
+    fat:         Math.round((food.fat     / per) * 10) / 10,
     servingDesc: food.servingDesc,
     count:       (prev?.count ?? 0) + 1,
     lastUsedAt:  Date.now(),

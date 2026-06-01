@@ -20,6 +20,15 @@ export const foodLimit = new Ratelimit({
   prefix:  'rl:food',
 });
 
+// 10 natural-language meal parses per user per minute. Each call hits an LLM, so
+// this is a COST guardrail (not just abuse prevention) — tighter than plain food
+// search. A real user parses a meal a handful of times a day; 10/min is ample.
+export const foodParseLimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(10, '1 m'),
+  prefix:  'rl:foodparse',
+});
+
 // 20 token-based step pushes per IP per minute. Generous for legit external
 // clients (iOS Shortcut / Tasker), but stops a brute-force of the step token
 // and the per-request DB token lookup from being hammered.
