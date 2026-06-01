@@ -12,14 +12,16 @@ import { ExerciseHistoryModal } from '@/components/ExerciseHistory';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   Calendar,
+  Check,
   ChevronLeft,
   ChevronRight,
   Dumbbell,
   Flame,
+  Plus,
   X,
 } from 'lucide-react';
 import { useSpotlightBorder } from '@/hooks/useSpotlightBorder';
-import { GOAL_TOLERANCE, LIFT_PRS_KEY } from '@/lib/constants';
+import { GOAL_TOLERANCE, LIFT_PRS_KEY, LIFTING_PROGRAM_KEY } from '@/lib/constants';
 import {
   useApp,
   MONTHS,
@@ -27,6 +29,10 @@ import {
   type DayRecord,
 } from '@/lib/AppContext';
 import { pushNow, gatherSettings } from '@/lib/syncEngine';
+import type { LiftingProgram } from '@/lib/lifting/program';
+import { weekAdjustedDays } from '@/lib/lifting/volume';
+import { buildProgramDayEntries, loadLiftPRs } from '@/lib/lifting/loadDay';
+import type { LoggedDay } from '@/lib/lifting/progression';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -331,10 +337,46 @@ function liftBadgeIcon(exerciseName: string, prWeight: number): string | null {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecord }) {
-  const { updateDayRecord, setActiveDayFocus, localDB } = useApp();
+  const { updateDayRecord, setActiveDayFocus, localDB, todayStr } = useApp();
   const arr    = parseEx(rec.exercises ?? '');
   const lifts  = arr.filter(e => e.k === 'lift' || e.k === 'text');
   const cardio = arr.filter(e => ['swim','run','bike'].includes(e.k));
+
+  // ── Active lifting program → "add today's plan workout" ─────────────────────
+  // When a structured program is set, surface its next-up day so the user can
+  // drop it into today's session straight from the calendar (same coached load +
+  // cursor advance as the Protocol-tab builder, via the shared helpers).
+  const [planAdded, setPlanAdded] = useState(false);
+  const program = useMemo<LiftingProgram | null>(() => {
+    try {
+      const raw = localStorage.getItem(LIFTING_PROGRAM_KEY);
+      return raw ? (JSON.parse(raw) as LiftingProgram) : null;
+    } catch { return null; }
+  }, []);
+  // The program day "up next" (cursor), with this week's set count applied.
+  const nextPlanDay = useMemo(() => {
+    if (!program || program.days.length === 0) return null;
+    const days = weekAdjustedDays(program, todayStr);
+    const idx  = ((program.cursor % days.length) + days.length) % days.length; // safe mod
+    return { day: days[idx], idx };
+  }, [program, todayStr]);
+
+  const addPlanWorkout = () => {
+    if (!program || !nextPlanDay) return;
+    const entries = buildProgramDayEntries(
+      nextPlanDay.day, localDB as Record<string, LoggedDay>, todayStr, loadLiftPRs(LIFT_PRS_KEY),
+    );
+    window.dispatchEvent(new CustomEvent('que-load-program-day', {
+      detail: { exercises: entries, dayName: nextPlanDay.day.name },
+    }));
+    // Advance the cursor so the next add suggests the following split day.
+    try {
+      const next = { ...program, cursor: (nextPlanDay.idx + 1) % program.days.length };
+      localStorage.setItem(LIFTING_PROGRAM_KEY, JSON.stringify(next));
+    } catch { /* storage full — entries already dispatched */ }
+    setPlanAdded(true);
+    setTimeout(() => setPlanAdded(false), 2200);
+  };
 
   // Recomputes all-time PRs from full localDB + the newly-edited exercises for
   // this day, writes queLiftPRs to localStorage, and fires an immediate sync so
@@ -579,7 +621,6 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
   }, [localDB, dateStr]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const today    = new Date();
-  const todayStr = toDateStr(today);
   const isToday  = dateStr === todayStr;
   const d        = new Date(dateStr + 'T00:00:00');
   const diffDays = Math.round((new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime() - d.getTime()) / 86400000);
@@ -665,6 +706,22 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
                 </span>
               </div>
             ) : null}
+            {isToday && nextPlanDay && (
+              <button
+                type="button"
+                onClick={addPlanWorkout}
+                className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 font-mono text-[9px] font-bold uppercase tracking-[1px] transition-all ${
+                  planAdded
+                    ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--bg-0)]'
+                    : 'border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent-12)]'
+                }`}
+                title={`Add "${nextPlanDay.day.name}" from your lifting program to today`}
+              >
+                {planAdded
+                  ? <><Check size={11} /> Added</>
+                  : <><Plus size={11} /> {nextPlanDay.day.name}</>}
+              </button>
+            )}
             <p className="font-mono text-[9px] text-[var(--ink-3)] tracking-[0.5px]">
               {isToday ? 'Swipe ← → to browse days' : '← → to browse'}
             </p>

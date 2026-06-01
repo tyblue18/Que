@@ -53,7 +53,10 @@ export interface DayCasStore {
 
 export type CommitResult =
   | { status: 'committed'; merged: MergeableDay; localWonFields: string[] }
-  | { status: 'deferred' }; // exhausted retries → client re-sends next sync (fail closed)
+  | { status: 'deferred'; attempts: number }; // exhausted retries → client re-sends next sync
+                                              // (fail closed). `attempts` = CAS losses, for
+                                              // diagnosable telemetry (a client-loop spike shows
+                                              // the same date hammered; genuine contention scatters).
 
 /** Small bound: 5 consecutive same-day CAS losses means contention beyond
  *  normal multi-device use — surface (defer), don't grind. */
@@ -103,6 +106,7 @@ export async function commitDayWithMerge(
   }
 
   // Exhausted → FAIL CLOSED: defer (no blind write, no silent drop). The client
-  // still holds the data and re-sends on the next sync.
-  return { status: 'deferred' };
+  // still holds the data and re-sends on the next sync. `attempts` is the server-
+  // truth retry count for telemetry diagnosability.
+  return { status: 'deferred', attempts: MAX_ATTEMPTS };
 }

@@ -135,7 +135,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   // exhausted retries under pathological same-day contention). The client treats
   // them differently: adopt-and-clear-dirty for a merge, keep-dirty-and-retry for
   // a deferral (see the que-conflict handler).
-  const conflicts: Array<{ date: string; data: unknown; deferred?: boolean }> = [];
+  const conflicts: Array<{ date: string; data: unknown; deferred?: boolean; attempts?: number }> = [];
 
   if (body.localDB && Object.keys(body.localDB).length > 0) {
     // 60s tolerance for legitimate clock skew between client browser and server.
@@ -193,7 +193,10 @@ export async function POST(req: Request): Promise<NextResponse> {
         // state (that would overwrite the very edit we're preserving and re-send
         // server data instead). We send no `data`: the client leaves its local
         // copy and its honest _fieldEditedAt untouched and just retries.
-        conflicts.push({ date, data: null, deferred: true });
+        // `attempts` rides along so the client can fire sync_deferred telemetry
+        // from this SERVER-decided fact (the count reflects server reality, even
+        // though trackEvent physically runs client-side).
+        conflicts.push({ date, data: null, deferred: true, attempts: result.attempts });
       } else if (result.localWonFields.length > 0) {
         // The stored row beat the push on ≥1 field — the merge reconciled them.
         // Return the MERGED day so the client ADOPTS it (not just toasts): its

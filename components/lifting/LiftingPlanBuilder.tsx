@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Dumbbell, ChevronDown, Plus, RotateCcw, Check, ArrowRight, Target, Beef, TrendingUp, CalendarClock, AlertTriangle, Repeat } from 'lucide-react';
-import { SECONDARY_MUSCLES, useApp, type ExerciseEntry } from '@/lib/AppContext';
+import { useApp } from '@/lib/AppContext';
 import { useUnits, lbToKg } from '@/lib/units';
 import { LIFTING_PROGRAM_KEY, LIFT_PRS_KEY } from '@/lib/constants';
 import {
@@ -11,7 +11,8 @@ import {
   type LiftingProgram, type ProgramDay, type LiftGoal, type LiftExperience,
 } from '@/lib/lifting/program';
 import { progressionAdvice, type LoggedDay } from '@/lib/lifting/progression';
-import { alternativesFor, hasAlternatives, type AltMovement } from '@/lib/lifting/alternatives';
+import { alternativesFor, type AltMovement } from '@/lib/lifting/alternatives';
+import { buildProgramDayEntries } from '@/lib/lifting/loadDay';
 import {
   currentMeso, weekAdjustedDays, currentWeeklyVolume, deloadSignal, startNextMeso,
   landmarkFor, volumeBand, volumeEmphasis,
@@ -71,6 +72,9 @@ export default function LiftingPlanBuilder({ bare = false }: { bare?: boolean } 
   const [openDay, setOpenDay] = useState<number | null>(0);
   const [added, setAdded]     = useState<number | null>(null); // flash "Added" on a day
   const [swapKey, setSwapKey] = useState<string | null>(null); // "dayIdx:exIdx" with its picker open
+  const [customKey,  setCustomKey]  = useState<string | null>(null); // row with the custom-entry form open
+  const [customName, setCustomName] = useState('');
+  const [customGroup, setCustomGroup] = useState('chest');
 
   useEffect(() => {
     const p = loadProgram();
@@ -98,30 +102,13 @@ export default function LiftingPlanBuilder({ bare = false }: { bare?: boolean } 
   }, [days, goal, level, profile.weight, persist]);
 
   // Push a day's exercises into today's workout log. Each set is pre-filled with
-  // the COACHED weight (progression engine), not the static PR estimate — so the
-  // logger opens already set to "what to do today".
+  // the COACHED weight (progression engine) via the shared buildProgramDayEntries
+  // helper — the SAME logic the calendar's "add plan workout" button uses.
   const startDay = useCallback((day: ProgramDay, idx: number) => {
     if (!program) return;
-    const prs = loadPRs();
-    const db  = localDB as Record<string, LoggedDay>;
-    const entries: ExerciseEntry[] = day.exercises.map(ex => {
-      // Prefer the program exercise's own secondary muscles (set correctly even
-      // for swapped-in variations like Dumbbell Bench Press, which aren't in the
-      // global SECONDARY_MUSCLES map); fall back to the map otherwise.
-      const fallback = SECONDARY_MUSCLES[ex.name] ?? {};
-      const g2 = ex.secondary?.[0] ?? fallback.g2;
-      const g3 = ex.secondary?.[1] ?? fallback.g3;
-      const advice = progressionAdvice(ex, db, todayStr, prs);
-      const w      = advice.targetLb != null ? String(advice.targetLb) : ''; // canonical lb
-      return {
-        k: 'lift',
-        n: ex.name,
-        g: ex.group,
-        ...(g2 ? { g2 } : {}),
-        ...(g3 ? { g3 } : {}),
-        sets: Array.from({ length: ex.sets }, () => ({ r: '1', w })),
-      };
-    });
+    const entries = buildProgramDayEntries(
+      day, localDB as Record<string, LoggedDay>, todayStr, loadPRs(),
+    );
     window.dispatchEvent(new CustomEvent('que-load-program-day', {
       detail: { exercises: entries, dayName: day.name },
     }));
@@ -330,7 +317,6 @@ export default function LiftingPlanBuilder({ bare = false }: { bare?: boolean } 
                           : advice.message;
                         const coached = advice.action === 'add_load';
                         const key = `${idx}:${i}`;
-                        const canSwap = hasAlternatives(ex.name);
                         const swapping = swapKey === key;
                         return (
                           <div key={i} className="py-2">
@@ -338,16 +324,17 @@ export default function LiftingPlanBuilder({ bare = false }: { bare?: boolean } 
                               <div className="min-w-0">
                                 <div className="flex items-center gap-1.5">
                                   <span className="font-mono text-[11px] text-[var(--ink-1)] tracking-[0.2px]">{ex.name}</span>
-                                  {canSwap && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setSwapKey(swapping ? null : key)}
-                                      aria-label={`Swap ${ex.name} for a variation`}
-                                      className={`flex-shrink-0 transition-colors ${swapping ? 'text-[var(--accent)]' : 'text-[var(--ink-3)] hover:text-[var(--accent)]'}`}
-                                    >
-                                      <Repeat size={11} />
-                                    </button>
-                                  )}
+                                  {/* Always available: swap for a same-muscle variation OR
+                                      replace with a fully custom exercise (for when none of
+                                      the listed movements work for this user). */}
+                                  <button
+                                    type="button"
+                                    onClick={() => setSwapKey(swapping ? null : key)}
+                                    aria-label={`Swap or replace ${ex.name}`}
+                                    className={`flex-shrink-0 transition-colors ${swapping ? 'text-[var(--accent)]' : 'text-[var(--ink-3)] hover:text-[var(--accent)]'}`}
+                                  >
+                                    <Repeat size={11} />
+                                  </button>
                                 </div>
                                 <span className="block font-mono text-[8px] text-[var(--ink-3)] tracking-[0.3px] mt-0.5">
                                   {rir} RIR · {ex.restSec >= 60 ? `${Math.round(ex.restSec / 60 * 10) / 10}m` : `${ex.restSec}s`} rest
@@ -390,7 +377,62 @@ export default function LiftingPlanBuilder({ bare = false }: { bare?: boolean } 
                                         </button>
                                       );
                                     })}
+                                    {/* Custom exercise — for when none of the listed movements
+                                        work. The chosen muscle group keeps fractional-set volume
+                                        counting correct; the prescription is preserved. */}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const ck = customKey === key ? null : key;
+                                        setCustomKey(ck);
+                                        if (ck) { setCustomName(''); setCustomGroup(ex.group); }
+                                      }}
+                                      className={`font-mono text-[9px] tracking-[0.2px] rounded-full px-2.5 py-1 border border-dashed transition-all ${
+                                        customKey === key
+                                          ? 'border-[var(--accent)] text-[var(--accent)]'
+                                          : 'border-[var(--line-2)] text-[var(--ink-3)] hover:border-[var(--accent)] hover:text-[var(--accent)]'
+                                      }`}
+                                    >
+                                      + Custom
+                                    </button>
                                   </div>
+
+                                  {/* Custom-exercise form */}
+                                  {customKey === key && (
+                                    <div className="mt-2 ml-3.5 pl-2 border-l border-[var(--line-2)] space-y-2">
+                                      <input
+                                        type="text" value={customName} maxLength={40}
+                                        onChange={e => setCustomName(e.target.value)}
+                                        placeholder="Exercise name (e.g. Landmine Press)"
+                                        className="w-full rounded-sm border border-[var(--line-2)] bg-[var(--bg-2)] px-2 py-1.5 font-mono text-[10px] text-[var(--ink-1)] placeholder:text-[var(--ink-3)] focus:outline-none focus:border-[var(--accent)]"
+                                      />
+                                      <div className="flex items-center gap-2">
+                                        <select
+                                          value={customGroup}
+                                          onChange={e => setCustomGroup(e.target.value)}
+                                          className="flex-1 rounded-sm border border-[var(--line-2)] bg-[var(--bg-2)] px-2 py-1.5 font-mono text-[10px] text-[var(--ink-1)] focus:outline-none focus:border-[var(--accent)]"
+                                          title="Which muscle this trains (keeps weekly-volume counting correct)"
+                                        >
+                                          {Object.entries(MUSCLE_LABEL).map(([g, lbl]) => (
+                                            <option key={g} value={g}>{lbl}</option>
+                                          ))}
+                                        </select>
+                                        <button
+                                          type="button"
+                                          disabled={!customName.trim()}
+                                          onClick={() => {
+                                            swapExercise(idx, i, {
+                                              name: customName.trim(), group: customGroup, secondary: [], role: ex.role,
+                                            });
+                                            setSwapKey(null); setCustomKey(null);
+                                          }}
+                                          className="rounded-sm bg-[var(--accent)] px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-[1px] text-[var(--bg-0)] hover:opacity-90 transition-opacity disabled:opacity-40"
+                                        >
+                                          Use
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
                                 </motion.div>
                               )}
                             </AnimatePresence>

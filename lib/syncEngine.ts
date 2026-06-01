@@ -40,6 +40,7 @@ import {
   COIN_KEY, PROFILE_PHOTO_KEY, UNITS_KEY, DB_KEY, PENDING_BADGE_POPUPS_KEY,
   LIFTING_PROGRAM_KEY,
 } from '@/lib/constants';
+import { trackEvent } from '@/lib/telemetry';
 
 type EarnedBadge = { slug: string; label: string; icon: string; category: string };
 
@@ -242,7 +243,7 @@ async function _push(payload: SyncPayload, attempt = 0): Promise<void> {
     if (res.ok) {
       const json = await res.json() as {
         syncedAt?:      string;
-        conflicts?:     Array<{ date: string; data: unknown; deferred?: boolean }>;
+        conflicts?:     Array<{ date: string; data: unknown; deferred?: boolean; attempts?: number }>;
         newBadges?:     Array<{ slug: string; label: string; icon: string; category: string }>;
         revokedBadges?: Array<{ slug: string; label: string; icon: string; category: string }>;
         newCoins?:      Array<{ date: string; coins: number }>;
@@ -259,8 +260,15 @@ async function _push(payload: SyncPayload, attempt = 0): Promise<void> {
           const raw = localStorage.getItem(DB_KEY);
           const db  = (raw ? JSON.parse(raw) : {}) as Record<string, unknown>;
           let wrote = false;
-          for (const { date, data, deferred } of json.conflicts) {
-            if (deferred) continue;           // leave the pending edit untouched
+          for (const { date, data, deferred, attempts } of json.conflicts) {
+            if (deferred) {
+              // Server-truth observability for the one silent path: it gave up a
+              // day's write after `attempts` CAS losses. Astronomically rare;
+              // the date + count let a future spike read as one-date-hammered
+              // (client loop) vs. scattered (genuine contention we under-modeled).
+              trackEvent('sync_deferred', { date, attempts: attempts ?? 0 });
+              continue;                       // leave the pending edit untouched
+            }
             db[date] = data;
             wrote = true;
           }

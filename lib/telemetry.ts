@@ -58,7 +58,11 @@ export type TelemetryEvent =
   // Invite growth loop
   | 'invite_shared'               // user shared/copied their invite link
   | 'invite_redeemed'             // a followed invite link was successfully redeemed
-  | 'invite_prompt_shown';        // the post-win invite nudge was displayed
+  | 'invite_prompt_shown'         // the post-win invite nudge was displayed
+  // Sync internals
+  | 'sync_deferred';              // server gave up a day's write after MAX_ATTEMPTS CAS losses
+                                  // (astronomically rare; props carry date + attempts so a
+                                  // spike reads as one-date-hammered vs. scattered contention)
 
 interface TelemetryProperties {
   /** Free-form integers / strings. Don't put PII here — categorical only.
