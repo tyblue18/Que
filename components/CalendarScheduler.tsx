@@ -33,6 +33,7 @@ import type { LiftingProgram } from '@/lib/lifting/program';
 import { weekAdjustedDays } from '@/lib/lifting/volume';
 import { buildProgramDayEntries, loadLiftPRs } from '@/lib/lifting/loadDay';
 import type { LoggedDay } from '@/lib/lifting/progression';
+import { useUnits } from '@/lib/units';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -343,10 +344,14 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
   const cardio = arr.filter(e => ['swim','run','bike'].includes(e.k));
 
   // ── Active lifting program → "add today's plan workout" ─────────────────────
-  // When a structured program is set, surface its next-up day so the user can
-  // drop it into today's session straight from the calendar (same coached load +
-  // cursor advance as the Protocol-tab builder, via the shared helpers).
+  // When a structured program is set, surface its next-up day. Tapping the button
+  // opens a confirm modal where the user PICKS which exercises to add (default
+  // all) — so they can drop in only some, do them out of order, or skip ones they
+  // can't do today. Same coached load + cursor advance as the Protocol builder.
+  const u = useUnits();
   const [planAdded, setPlanAdded] = useState(false);
+  const [planPickerOpen, setPlanPickerOpen] = useState(false);
+  const [planPicks, setPlanPicks] = useState<Set<number>>(new Set()); // selected exercise indices
   const program = useMemo<LiftingProgram | null>(() => {
     try {
       const raw = localStorage.getItem(LIFTING_PROGRAM_KEY);
@@ -361,19 +366,43 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
     return { day: days[idx], idx };
   }, [program, todayStr]);
 
-  const addPlanWorkout = () => {
-    if (!program || !nextPlanDay) return;
+  // Coached entries for the next-up day (built once) — the modal reads each
+  // exercise's pre-filled top-set weight from here to show the "~weight" hint.
+  const planEntryPreview = useMemo(() => {
+    if (!nextPlanDay) return [];
     const entries = buildProgramDayEntries(
       nextPlanDay.day, localDB as Record<string, LoggedDay>, todayStr, loadLiftPRs(LIFT_PRS_KEY),
     );
+    return entries.map(e => ({ wLb: parseFloat(String(e.sets?.[0]?.w ?? '0')) || 0 }));
+  }, [nextPlanDay, localDB, todayStr]);
+
+  // Open the picker with every exercise pre-selected.
+  const openPlanPicker = () => {
+    if (!nextPlanDay) return;
+    setPlanPicks(new Set(nextPlanDay.day.exercises.map((_, i) => i)));
+    setPlanPickerOpen(true);
+  };
+
+  // Add only the checked exercises to today's session, in their listed order.
+  const confirmAddPlan = () => {
+    if (!program || !nextPlanDay) return;
+    const all = buildProgramDayEntries(
+      nextPlanDay.day, localDB as Record<string, LoggedDay>, todayStr, loadLiftPRs(LIFT_PRS_KEY),
+    );
+    const chosen = all.filter((_, i) => planPicks.has(i));
+    if (chosen.length === 0) { setPlanPickerOpen(false); return; }
     window.dispatchEvent(new CustomEvent('que-load-program-day', {
-      detail: { exercises: entries, dayName: nextPlanDay.day.name },
+      detail: { exercises: chosen, dayName: nextPlanDay.day.name },
     }));
-    // Advance the cursor so the next add suggests the following split day.
-    try {
-      const next = { ...program, cursor: (nextPlanDay.idx + 1) % program.days.length };
-      localStorage.setItem(LIFTING_PROGRAM_KEY, JSON.stringify(next));
-    } catch { /* storage full — entries already dispatched */ }
+    // Advance the cursor only when the WHOLE day was added — a partial pick (the
+    // user skipped some) shouldn't move them off this split day yet.
+    if (chosen.length === nextPlanDay.day.exercises.length) {
+      try {
+        const next = { ...program, cursor: (nextPlanDay.idx + 1) % program.days.length };
+        localStorage.setItem(LIFTING_PROGRAM_KEY, JSON.stringify(next));
+      } catch { /* storage full — entries already dispatched */ }
+    }
+    setPlanPickerOpen(false);
     setPlanAdded(true);
     setTimeout(() => setPlanAdded(false), 2200);
   };
@@ -709,7 +738,7 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
             {isToday && nextPlanDay && (
               <button
                 type="button"
-                onClick={addPlanWorkout}
+                onClick={openPlanPicker}
                 className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 font-mono text-[9px] font-bold uppercase tracking-[1px] transition-all ${
                   planAdded
                     ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--bg-0)]'
@@ -946,6 +975,78 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
         open={historyEx !== null}
         onClose={() => setHistoryEx(null)}
       />
+
+      {/* ── Plan-workout picker: choose which exercises to add to today ── */}
+      <AnimatePresence>
+        {planPickerOpen && nextPlanDay && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center px-5 backdrop-blur-sm"
+            style={{ background: 'rgba(7,8,10,0.85)' }}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            onClick={e => { if (e.target === e.currentTarget) setPlanPickerOpen(false); }}
+          >
+            <motion.div
+              className="w-full max-w-[360px] rounded-lg border border-[var(--line-2)] bg-[var(--bg-1)] p-5"
+              initial={{ scale: 0.94, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.94, y: 12 }}
+              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+              style={{ boxShadow: '0 0 0 1px var(--line-2), 0 24px 48px rgba(0,0,0,0.55)' }}
+            >
+              <p className="font-display text-[20px] tracking-[1px] uppercase text-[var(--ink-0)] mb-1">
+                {nextPlanDay.day.name}
+              </p>
+              <p className="font-mono text-[10px] text-[var(--ink-3)] tracking-[0.3px] mb-4">
+                Pick what you&apos;re doing today — log them in any order.
+              </p>
+
+              <div className="flex flex-col gap-1.5 max-h-[46vh] overflow-y-auto -mx-1 px-1">
+                {planEntryPreview.map((p, i) => {
+                  const ex = nextPlanDay.day.exercises[i];
+                  const checked = planPicks.has(i);
+                  return (
+                    <button
+                      key={i} type="button"
+                      onClick={() => setPlanPicks(prev => {
+                        const next = new Set(prev);
+                        if (next.has(i)) next.delete(i); else next.add(i);
+                        return next;
+                      })}
+                      className={`flex items-center gap-2.5 rounded-md border px-3 py-2 text-left transition-all ${
+                        checked
+                          ? 'border-[var(--accent)] bg-[var(--accent-12)]'
+                          : 'border-[var(--line-2)] bg-[var(--bg-2)] opacity-55'
+                      }`}
+                    >
+                      <span className={`flex-shrink-0 w-4 h-4 rounded-sm border flex items-center justify-center ${checked ? 'border-[var(--accent)] bg-[var(--accent)]' : 'border-[var(--line-3)]'}`}>
+                        {checked && <Check size={11} className="text-[var(--bg-0)]" />}
+                      </span>
+                      <span className="flex-1 min-w-0">
+                        <span className="block font-mono text-[11px] text-[var(--ink-1)] tracking-[0.2px] truncate">{ex.name}</span>
+                        <span className="block font-mono text-[8px] text-[var(--ink-3)] tracking-[0.3px]">
+                          {ex.sets} × {ex.repLow}-{ex.repHigh}{p.wLb > 0 ? ` · ~${u.fmtWeight(p.wLb)}` : ''}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex gap-2 mt-4">
+                <button onClick={() => setPlanPickerOpen(false)} className="flex-1 que-btn-ghost">
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmAddPlan}
+                  disabled={planPicks.size === 0}
+                  className="flex-1 py-2.5 rounded font-mono text-[11px] font-bold tracking-[1.5px] uppercase border border-[var(--accent)] bg-[var(--accent-12)] text-[var(--accent)] hover:bg-[var(--accent-24)] transition-all disabled:opacity-40"
+                >
+                  Add {planPicks.size > 0 ? planPicks.size : ''}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
