@@ -90,6 +90,15 @@ export interface DayRecord {
   sessRating?: number; // session quality, 1–10
   sessFeel?:   number; // how they felt, 1–10
   weight?:   string;
+  /** Body measurements logged per day. Circumferences stored CANONICAL in
+   *  inches (converted to cm for metric users at the UI edge, like height);
+   *  bodyFat is a unit-less percentage. */
+  waist?:   number;   // inches
+  chest?:   number;   // inches
+  arms?:    number;   // inches
+  thighs?:  number;   // inches
+  hips?:    number;   // inches
+  bodyFat?: number;   // %
   burn?:     number;
   budget?:   number;
   /** TDEE (BMR × activity multiplier) snapshotted at log time. Deficit- and

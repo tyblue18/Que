@@ -192,6 +192,21 @@
 }
 
 /* ════════════════════════════════════════════════════════════════════════
+   REDUCED MOTION — respect the OS accessibility setting. Neutralizes all CSS
+   animations/transitions (ambient glow, flicker, keyframes). Framer Motion is
+   handled via <MotionConfig reducedMotion="user">, and looping Lottie via the
+   usePrefersReducedMotion hook. Unlayered + !important so it wins the cascade.
+════════════════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
    APP SHELL
 ═══════════════════════════════════════════════════════════════════════ */
 

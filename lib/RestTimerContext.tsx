@@ -27,7 +27,7 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence } from 'framer-motion';
 import { useApp, type DayRecord } from '@/lib/AppContext';
 import { REST_TIMER_KEY } from '@/lib/constants';
-import { parseEx, serializeEx, normalizeSets } from '@/lib/exerciseSerial';
+import { parseEx, serializeEx, normalizeSets, applyLoggedSet } from '@/lib/exerciseSerial';
 import { RestTimerBar } from '@/components/workout/RestTimerBar';
 
 /** 2:30 — a sane default rest for hypertrophy sets. */
@@ -152,13 +152,8 @@ export function RestTimerProvider({ children }: { children: React.ReactNode }) {
       const arr = parseEx(rec?.exercises ?? '');
       const e = arr[t.exIndex];
       if (e && e.k === 'lift') {
-        const sets = Array.isArray(e.sets) && e.sets.length ? [...e.sets] : normalizeSets(e);
-        // Mirror WorkoutLogger.logRestSet: fill the first placeholder set
-        // (reps still at the default 1) before appending a new one.
-        const ph = sets.findIndex(s => String(s.r) === '1');
-        const next = { r: reps || '1', w: weight };
-        if (ph >= 0) sets[ph] = next; else sets.push(next);
-        arr[t.exIndex] = { ...e, sets };
+        const sets = Array.isArray(e.sets) && e.sets.length ? e.sets : normalizeSets(e);
+        arr[t.exIndex] = { ...e, sets: applyLoggedSet(sets, reps, weight) };
         updateDayRecord(t.date, { exercises: serializeEx(arr) });
       }
     }

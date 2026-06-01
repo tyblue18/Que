@@ -28,6 +28,8 @@ import {
 } from '@/lib/metricsTypes';
 import { drawLineChart } from '@/lib/metricsCharts';
 import { useUnits, kgToLb, cmToIn } from '@/lib/units';
+import { Measurements } from '@/components/metrics/Measurements';
+import { ProgressPhoto } from '@/components/metrics/ProgressPhoto';
 import {
   MilestoneModal, CelebrationModal, PlanProgressModal, PlanModal, ProjectionModal, PlanHistoryModal,
 } from '@/components/metrics/MetricsModals';
@@ -276,6 +278,9 @@ function ProfilePanel({ profile, onChange, onOpenPlan, onOpenRunPlan, onOpenHist
             </button>
           )}
         </div>
+
+        <Measurements />
+        <ProgressPhoto />
 
         <StepSyncPanel />
       </div>
@@ -1183,13 +1188,13 @@ function TrendsCard() {
       <div className="p-5">
         <h2 className="que-section-label mb-4"><span className="dot" />TRENDS</h2>
 
-        <div className="flex gap-1.5 mb-4">
+        <div className="flex gap-1.5 mb-4 overflow-x-auto flex-nowrap pb-1">
           {(Object.keys(chartConfig) as TrendKey[]).map(k => (
             <button
               key={k}
               onClick={() => setActiveTab(k)}
               data-active={activeTab === k}
-              className="que-pill"
+              className="que-pill flex-shrink-0"
               style={activeTab === k ? { background: chartConfig[k].color, color: 'var(--accent-ink)', borderColor: chartConfig[k].color } : undefined}
             >
               {chartConfig[k].label}
@@ -1219,7 +1224,7 @@ function TrendsCard() {
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function MetricsDashboard() {
+export default function MetricsDashboard({ openProfileSignal = 0 }: { openProfileSignal?: number } = {}) {
   const {
     today, todayStr,
     activeDayFocus,
@@ -1230,6 +1235,17 @@ export default function MetricsDashboard() {
   } = useApp();
 
   const [profileOpen,      setProfileOpen]      = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
+  // Opened from the header dropdown ("Athlete Profile"). page.tsx switches to
+  // this tab and bumps openProfileSignal; we expand the panel + scroll to it.
+  // A prop (not an event listener) so it works even when this tab was lazy-
+  // mounted by that same click — the signal is already set on first render.
+  useEffect(() => {
+    if (openProfileSignal <= 0) return;
+    setProfileOpen(true);
+    const t = setTimeout(() => profileRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
+    return () => clearTimeout(t);
+  }, [openProfileSignal]);
   const [projVisible,      setProjVisible]      = useState(false);
   const [planOpen,         setPlanOpen]         = useState(false);
   const [progressOpen,     setProgressOpen]     = useState(false);
@@ -1503,7 +1519,7 @@ export default function MetricsDashboard() {
 
       <WeeklyRecapCard />
 
-      {profileOpen && <ProfilePanel profile={profile} onChange={handleProfileChange} onOpenPlan={() => setPlanOpen(true)} onOpenRunPlan={() => setRunPlanOpen(true)} onOpenHistory={() => setHistoryOpen(true)} />}
+      {profileOpen && <div ref={profileRef}><ProfilePanel profile={profile} onChange={handleProfileChange} onOpenPlan={() => setPlanOpen(true)} onOpenRunPlan={() => setRunPlanOpen(true)} onOpenHistory={() => setHistoryOpen(true)} /></div>}
 
       <CalorieBudgetCard m={m} onOpenProgress={() => setProgressOpen(true)} prFlags={prFlags} />
 

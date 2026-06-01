@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { MotionConfig } from 'framer-motion';
 import dynamic from 'next/dynamic';
 import { Calendar, BarChart2, Layers, Utensils, Users } from 'lucide-react';
 import { AuthHeader }    from '@/components/header';
@@ -54,7 +55,20 @@ export default function WorkoutPage() {
     setOnboarding(needsOnboarding());
   }, [isLoaded]);
 
+  // The header dropdown's "Athlete Profile" opens the profile, which lives on
+  // the Metrics tab. Jump there and bump a signal MetricsDashboard reads as a
+  // prop — robust even when this click is what lazy-mounts the Metrics tab.
+  const [profileSignal, setProfileSignal] = useState(0);
+  useEffect(() => {
+    const open = () => { setTab('metrics'); setProfileSignal(n => n + 1); };
+    window.addEventListener('que-open-athlete-profile', open);
+    return () => window.removeEventListener('que-open-athlete-profile', open);
+  }, []);
+
   return (
+    /* reducedMotion="user" → every Framer Motion transition below respects the
+       OS "Reduce Motion" setting (animations collapse to instant/opacity). */
+    <MotionConfig reducedMotion="user">
     <RestTimerProvider>
     <div className="app-shell">
       <AuthHeader />
@@ -84,7 +98,7 @@ export default function WorkoutPage() {
         )}
         {tab === 'metrics' && (
           <ErrorBoundary label="Metrics">
-            <MetricsDashboard />
+            <MetricsDashboard openProfileSignal={profileSignal} />
           </ErrorBoundary>
         )}
         {tab === 'protocol' && (
@@ -125,5 +139,6 @@ export default function WorkoutPage() {
       {!showOnboarding && isLoaded && <WeeklyRecapModal />}
     </div>
     </RestTimerProvider>
+    </MotionConfig>
   );
 }

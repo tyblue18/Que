@@ -33,17 +33,22 @@ export interface FakeTeamBattle {
 }
 export interface FakeDay { userId: string; date: string; data: Record<string, unknown> }
 
+export interface FakeAppUser { id: string; username: string | null; leaderboardOptIn: boolean }
+
 interface State {
   wallets:      FakeWallet[];
   txns:         FakeTxn[];
   challenges:   FakeChallenge[];
   teamBattles:  FakeTeamBattle[];
   days:         FakeDay[];
+  users:        FakeAppUser[];
+  subs:         string[]; // push-subscribed userIds
   walletSeq:    number;
   txnSeq:       number;
 }
 
 type DateFilter = { gte?: string; lte?: string };
+type UserIdFilter = string | { in: string[] };
 
 export interface FakePrisma {
   state: State;
@@ -52,6 +57,8 @@ export interface FakePrisma {
   seedChallenge(c: FakeChallenge): FakeChallenge;
   seedTeamBattle(t: FakeTeamBattle): FakeTeamBattle;
   seedDay(userId: string, date: string, data: Record<string, unknown>): void;
+  seedUser(u: FakeAppUser): FakeAppUser;
+  seedSub(userId: string): void;
   walletOf(userId: string): FakeWallet | undefined;
   txnsFor(refId: string): FakeTxn[];
   // ── prisma-like surface (subset the engines use) ──
@@ -60,16 +67,26 @@ export interface FakePrisma {
     update(args: { where: { id: string }; data: { balance: { increment?: number; decrement?: number } } }): Promise<FakeWallet>;
   };
   coinTransaction: { create(args: { data: { walletId: string; amount: number; reason: string; refId?: string | null } }): Promise<FakeTxn> };
-  challenge:  { findUnique(args: { where: { id: string } }): Promise<FakeChallenge | null>; updateMany(args: { where: { id: string; status?: string }; data: Partial<FakeChallenge> }): Promise<{ count: number }> };
-  teamBattle: { findUnique(args: { where: { id: string }; include?: unknown }): Promise<FakeTeamBattle | null>; updateMany(args: { where: { id: string; status?: string }; data: Partial<FakeTeamBattle> }): Promise<{ count: number }> };
-  dayRecord:  { findMany(args: { where: { userId: string; date?: DateFilter }; select?: unknown; orderBy?: unknown }): Promise<Array<{ date: string; data: Record<string, unknown> }>> };
+  challenge:  {
+    findUnique(args: { where: { id: string } }): Promise<FakeChallenge | null>;
+    updateMany(args: { where: { id: string; status?: string }; data: Partial<FakeChallenge> }): Promise<{ count: number }>;
+    findMany(args: { where: { status?: string; endDate?: string }; select?: unknown }): Promise<FakeChallenge[]>;
+  };
+  teamBattle: {
+    findUnique(args: { where: { id: string }; include?: unknown }): Promise<FakeTeamBattle | null>;
+    updateMany(args: { where: { id: string; status?: string }; data: Partial<FakeTeamBattle> }): Promise<{ count: number }>;
+    findMany(args: { where: { status?: string; endDate?: string }; include?: unknown }): Promise<FakeTeamBattle[]>;
+  };
+  pushSubscription: { findMany(args: { distinct?: string[]; select?: unknown }): Promise<Array<{ userId: string }>> };
+  dayRecord:  { findMany(args: { where: { userId: UserIdFilter; date?: DateFilter }; select?: unknown; orderBy?: unknown }): Promise<Array<{ userId: string; date: string; data: Record<string, unknown> }>> };
+  appUser:    { findMany(args: { where?: { leaderboardOptIn?: boolean; username?: { not: null } }; select?: unknown }): Promise<Array<{ id: string; username: string | null }>> };
   $transaction<T>(fn: (tx: FakePrisma) => Promise<T>): Promise<T>;
 }
 
 export function makeFakePrisma(): FakePrisma {
   const fake = {
     state: {
-      wallets: [], txns: [], challenges: [], teamBattles: [], days: [],
+      wallets: [], txns: [], challenges: [], teamBattles: [], days: [], users: [], subs: [],
       walletSeq: 0, txnSeq: 0,
     } as State,
   } as FakePrisma;
@@ -85,6 +102,8 @@ export function makeFakePrisma(): FakePrisma {
   fake.seedChallenge   = c => { fake.state.challenges.push(c); return c; };
   fake.seedTeamBattle  = t => { fake.state.teamBattles.push(t); return t; };
   fake.seedDay         = (userId, date, data) => { fake.state.days.push({ userId, date, data }); };
+  fake.seedUser        = u => { fake.state.users.push(u); return u; };
+  fake.seedSub         = userId => { if (!fake.state.subs.includes(userId)) fake.state.subs.push(userId); };
   fake.walletOf        = userId => fake.state.wallets.find(w => w.userId === userId);
   fake.txnsFor         = refId => fake.state.txns.filter(t => t.refId === refId);
 
@@ -124,6 +143,12 @@ export function makeFakePrisma(): FakePrisma {
       Object.assign(c, args.data);
       return { count: 1 };
     },
+    async findMany(args) {
+      const { status, endDate } = args.where;
+      return fake.state.challenges
+        .filter(c => status === undefined || c.status === status)
+        .filter(c => endDate === undefined || c.endDate === endDate);
+    },
   };
 
   fake.teamBattle = {
@@ -135,17 +160,39 @@ export function makeFakePrisma(): FakePrisma {
       Object.assign(t, args.data);
       return { count: 1 };
     },
+    async findMany(args) {
+      const { status, endDate } = args.where;
+      return fake.state.teamBattles
+        .filter(t => status === undefined || t.status === status)
+        .filter(t => endDate === undefined || t.endDate === endDate);
+    },
+  };
+
+  fake.pushSubscription = {
+    async findMany() { return [...new Set(fake.state.subs)].map(userId => ({ userId })); },
   };
 
   fake.dayRecord = {
     async findMany(args) {
       const { userId, date } = args.where;
+      const matchesUser = (id: string) =>
+        typeof userId === 'string' ? id === userId : userId.in.includes(id);
       return fake.state.days
-        .filter(d => d.userId === userId)
+        .filter(d => matchesUser(d.userId))
         .filter(d => !date?.gte || d.date >= date.gte)
         .filter(d => !date?.lte || d.date <= date.lte)
         .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
-        .map(d => ({ date: d.date, data: d.data }));
+        .map(d => ({ userId: d.userId, date: d.date, data: d.data }));
+    },
+  };
+
+  fake.appUser = {
+    async findMany(args) {
+      const w = args.where ?? {};
+      return fake.state.users
+        .filter(u => w.leaderboardOptIn === undefined || u.leaderboardOptIn === w.leaderboardOptIn)
+        .filter(u => !w.username || u.username !== null) // { username: { not: null } }
+        .map(u => ({ id: u.id, username: u.username }));
     },
   };
 

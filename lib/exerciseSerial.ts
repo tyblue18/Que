@@ -7,7 +7,7 @@
  * the two writers of `DayRecord.exercises`.
  */
 
-import type { ExerciseEntry } from '@/lib/AppContext';
+import type { ExerciseEntry, SetData } from '@/lib/AppContext';
 
 /** Parse the stored `exercises` blob. Modern rows are a JSON array; very old
  *  rows were newline-separated free text, which we coerce into text entries. */
@@ -28,4 +28,25 @@ export function normalizeSets(e: ExerciseEntry): Array<{ r: string; w: string }>
   if (e.sets && Array.isArray(e.sets)) return e.sets;
   const count = parseInt(String(e.s ?? '1')) || 1;
   return Array.from({ length: count }, () => ({ r: String(e.r ?? '1'), w: String(e.w ?? '') }));
+}
+
+/**
+ * Apply a set logged from the rest timer to an exercise's set list. The workout
+ * form commits N sets at the placeholder reps `1`; the user does each set then
+ * logs its real reps as they go — so this OVERWRITES the first set still at the
+ * placeholder `1`, and only appends a new set once every set is filled. Pure +
+ * non-mutating; shared by WorkoutLogger and the rest-timer context so both write
+ * paths behave identically.
+ */
+export function applyLoggedSet(
+  sets: ReadonlyArray<{ r: string; w: string }>,
+  reps: string,
+  weight: string,
+): SetData[] {
+  const next: SetData[] = sets.map(s => ({ r: s.r, w: s.w }));
+  const logged: SetData = { r: reps || '1', w: weight };
+  const placeholder = next.findIndex(s => String(s.r) === '1');
+  if (placeholder >= 0) next[placeholder] = logged;
+  else next.push(logged);
+  return next;
 }

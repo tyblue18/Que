@@ -30,7 +30,7 @@ import { isGoalDay, dayMaintenanceFromRecord, type PlanDirection } from '@/lib/c
 import { ActivityIcon, PRLiveBadge } from '@/components/ActivityIcon';
 import { AutoCropImage } from '@/components/AutoCropImage';
 import { ExerciseHistoryModal } from '@/components/ExerciseHistory';
-import { parseEx, serializeEx, normalizeSets } from '@/lib/exerciseSerial';
+import { parseEx, serializeEx, normalizeSets, applyLoggedSet } from '@/lib/exerciseSerial';
 import { useUnits } from '@/lib/units';
 import { useRestTimer, DEFAULT_REST_MS } from '@/lib/RestTimerContext';
 import { SessionRatingModal } from '@/components/workout/SessionRatingModal';
@@ -1265,14 +1265,8 @@ export default function WorkoutLogger() {
     if (idx < 0 || curr[idx]?.k !== 'lift') return;             // target gone (deleted) → no-op
     setExercises(curr.map((e, i) => {
       if (i !== idx) return e;
-      const sets = Array.isArray(e.sets) && e.sets.length ? [...e.sets] : normalizeSets(e);
-      // The form commits N sets at the placeholder reps=1; the user does each
-      // set, then logs the real reps via the bar. So FILL the first still-at-1
-      // set rather than appending — only append once every set is filled.
-      const ph = sets.findIndex(s => String(s.r) === '1');
-      const next = { r: reps || '1', w: weight };
-      if (ph >= 0) sets[ph] = next; else sets.push(next);
-      return { ...e, sets };
+      const sets = Array.isArray(e.sets) && e.sets.length ? e.sets : normalizeSets(e);
+      return { ...e, sets: applyLoggedSet(sets, reps, weight) };
     }));
   }, [setExercises]);
 

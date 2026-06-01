@@ -11,6 +11,7 @@ import ProfileCard, { type PublicProfile }           from '@/components/ProfileC
 import { InviteFriends }                              from '@/components/social/InviteFriends';
 import { BeatLastWeek }                                from '@/components/social/BeatLastWeek';
 import { GlobalLeaderboard }                            from '@/components/social/GlobalLeaderboard';
+import { usePrefersReducedMotion }                      from '@/hooks/usePrefersReducedMotion';
 import { Groups }                                     from '@/components/social/Groups';
 import { TeamBattles }                               from '@/components/social/TeamBattles';
 import {
@@ -1104,6 +1105,7 @@ function FriendProfileSheet({ userId, onClose, onChallenge }: {
 // ── Main SocialTab ────────────────────────────────────────────────────────────
 
 export default function SocialTab() {
+  const reducedMotion = usePrefersReducedMotion();
   const [ownProfile,    setOwnProfile]    = useState<PublicProfile | null>(null);
   const [friends,       setFriends]       = useState<FriendData[]>([]);
   const [incoming,      setIncoming]      = useState<PendingData[]>([]);
@@ -1397,10 +1399,12 @@ export default function SocialTab() {
             exit={{ opacity: 0 }}
             transition={{ duration: 0.4, ease: 'easeInOut' }}
           >
-            {loadingAnim ? (
+            {loadingAnim && !reducedMotion ? (
               <Lottie animationData={loadingAnim} loop autoplay className="w-44 h-44" />
             ) : (
-              <div className="w-44 h-44" aria-hidden="true" />
+              <div className="w-44 h-44 flex items-center justify-center" aria-hidden="true">
+                {reducedMotion && <div className="w-6 h-6 rounded-full border-2 border-[var(--accent)] border-t-transparent" />}
+              </div>
             )}
           </motion.div>
         )}
