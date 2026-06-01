@@ -8,7 +8,7 @@ import React, {
   useState,
 } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Activity, ChevronRight, Download, History, Plus, User, X } from 'lucide-react';
+import { Activity, ChevronRight, Download, Dumbbell, History, Plus, User, X } from 'lucide-react';
 import {
   useApp,
   type DayRecord, type UserProfile,
@@ -34,6 +34,7 @@ import {
   MilestoneModal, CelebrationModal, PlanProgressModal, PlanModal, ProjectionModal, PlanHistoryModal,
 } from '@/components/metrics/MetricsModals';
 import RunningPlanBuilder from '@/components/running/RunningPlanBuilder';
+import LiftingPlanBuilder from '@/components/lifting/LiftingPlanBuilder';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SUB-COMPONENT — StepSyncPanel
@@ -92,11 +93,12 @@ function StepSyncPanel() {
 // SUB-COMPONENT — ProfilePanel
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ProfilePanel({ profile, onChange, onOpenPlan, onOpenRunPlan, onOpenHistory }: {
+function ProfilePanel({ profile, onChange, onOpenPlan, onOpenRunPlan, onOpenLiftPlan, onOpenHistory }: {
   profile: UserProfile;
   onChange: (updates: Partial<UserProfile>) => void;
   onOpenPlan: () => void;
   onOpenRunPlan: () => void;
+  onOpenLiftPlan: () => void;
   onOpenHistory: () => void;
 }) {
   const hasPlanHistory = typeof window !== 'undefined' && loadPlanHistory().length > 0;
@@ -265,6 +267,9 @@ function ProfilePanel({ profile, onChange, onOpenPlan, onOpenRunPlan, onOpenHist
             title="Download a JSON snapshot of all your local data"
           >
             <Download size={13} /> Export Data
+          </button>
+          <button onClick={onOpenLiftPlan} className="que-btn-ghost flex items-center gap-2">
+            <Dumbbell size={13} /> Lifting Program
           </button>
           <button onClick={onOpenRunPlan} className="que-btn-ghost flex items-center gap-2">
             <Activity size={13} /> Running Plan
@@ -1253,6 +1258,7 @@ export default function MetricsDashboard({ openProfileSignal = 0 }: { openProfil
   const [celebrateVisible, setCelebrateVisible] = useState(false);
   const [milestone,        setMilestone]        = useState<{ pct: number; weightChange: number } | null>(null);
   const [runPlanOpen,      setRunPlanOpen]      = useState(false);
+  const [liftPlanOpen,     setLiftPlanOpen]     = useState(false);
 
   const milestoneCheckedRef = useRef(false);
   useEffect(() => {
@@ -1519,7 +1525,7 @@ export default function MetricsDashboard({ openProfileSignal = 0 }: { openProfil
 
       <WeeklyRecapCard />
 
-      {profileOpen && <div ref={profileRef}><ProfilePanel profile={profile} onChange={handleProfileChange} onOpenPlan={() => setPlanOpen(true)} onOpenRunPlan={() => setRunPlanOpen(true)} onOpenHistory={() => setHistoryOpen(true)} /></div>}
+      {profileOpen && <div ref={profileRef}><ProfilePanel profile={profile} onChange={handleProfileChange} onOpenPlan={() => setPlanOpen(true)} onOpenRunPlan={() => setRunPlanOpen(true)} onOpenLiftPlan={() => setLiftPlanOpen(true)} onOpenHistory={() => setHistoryOpen(true)} /></div>}
 
       <CalorieBudgetCard m={m} onOpenProgress={() => setProgressOpen(true)} prFlags={prFlags} />
 
@@ -1597,6 +1603,31 @@ export default function MetricsDashboard({ openProfileSignal = 0 }: { openProfil
             </div>
             <div className="flex-1 overflow-y-auto">
               <RunningPlanBuilder />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {liftPlanOpen && (
+          <motion.div
+            className="fixed inset-0 z-[400] flex flex-col bg-[var(--bg-0)]"
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--line)]">
+              <button
+                onClick={() => setLiftPlanOpen(false)}
+                className="w-8 h-8 rounded flex items-center justify-center text-[var(--ink-2)] hover:text-[var(--ink-1)] transition-colors"
+              >
+                <X size={18} />
+              </button>
+              <span className="font-mono text-[11px] font-bold tracking-[2px] uppercase text-[var(--ink-1)]">Lifting Program</span>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              <LiftingPlanBuilder bare />
             </div>
           </motion.div>
         )}

@@ -7,6 +7,7 @@ import { Calendar, BarChart2, Layers, Utensils, Users } from 'lucide-react';
 import { AuthHeader }    from '@/components/header';
 import CalendarScheduler from '@/components/CalendarScheduler';
 import WorkoutLogger     from '@/components/WorkoutLogger';
+import LiftingPlanBuilder from '@/components/lifting/LiftingPlanBuilder';
 import { Onboarding, needsOnboarding } from '@/components/Onboarding';
 import { GettingStarted } from '@/components/GettingStarted';
 import { MorningWeightPrompt } from '@/components/MorningWeightPrompt';
@@ -103,7 +104,8 @@ export default function WorkoutPage() {
         )}
         {tab === 'protocol' && (
           <ErrorBoundary label="Protocol">
-            <div className="app-protocol-layout">
+            <div className="app-protocol-layout space-y-4">
+              <LiftingPlanBuilder />
               <WorkoutLogger />
             </div>
           </ErrorBoundary>

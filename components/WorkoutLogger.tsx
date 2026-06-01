@@ -1181,6 +1181,23 @@ export default function WorkoutLogger() {
     return () => window.removeEventListener('que-settings-restored', onRestored);
   }, []);
 
+  // ── Load a program day pushed from the Lifting Program builder ─────────────
+  // Detail: { exercises: ExerciseEntry[] }. Appends to the active day's log
+  // (non-destructive) so a generated workout drops straight in, ready to fill.
+  // Reads the current day fresh from localDB to avoid a stale `exercises`
+  // closure inside the long-lived listener.
+  useEffect(() => {
+    function onLoadProgram(e: Event) {
+      const incoming = (e as CustomEvent).detail?.exercises as ExerciseEntry[] | undefined;
+      if (!incoming?.length) return;
+      const rec = localDB[activeDayFocus];
+      const current = parseEx(rec?.exercises ?? '');
+      setExercises([...current, ...incoming]);
+    }
+    window.addEventListener('que-load-program-day', onLoadProgram);
+    return () => window.removeEventListener('que-load-program-day', onLoadProgram);
+  }, [activeDayFocus, localDB, setExercises]);
+
   // ── pill drag
   const onPillsMouseDown = useCallback((e: React.MouseEvent) => {
     const row = pillsRowRef.current; if (!row) return;

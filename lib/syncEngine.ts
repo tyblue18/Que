@@ -38,6 +38,7 @@ import {
   CUSTOM_EXERCISES_KEY,
   LAST_STREAK_KEY, LIFT_PRS_KEY, MILLION_GROUPS_KEY, MACRO_GOALS_KEY,
   COIN_KEY, PROFILE_PHOTO_KEY, UNITS_KEY, DB_KEY, PENDING_BADGE_POPUPS_KEY,
+  LIFTING_PROGRAM_KEY,
 } from '@/lib/constants';
 
 type EarnedBadge = { slug: string; label: string; icon: string; category: string };
@@ -79,6 +80,7 @@ const SETTINGS_KEYS = [
   COIN_KEY,                // coin balance — used for battle wagering later
   PROFILE_PHOTO_KEY,       // profile photo URL (Vercel Blob) or base64 fallback
   UNITS_KEY,               // imperial/metric display preference — synced across devices
+  LIFTING_PROGRAM_KEY,     // structured lifting program (split + prescribed sets/reps)
 ] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────

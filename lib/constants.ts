@@ -67,3 +67,5 @@ export const COINS_MIGRATED_KEY = 'queCoinsMigrated';
 export const REST_TIMER_KEY     = 'queRestTimer';
 // Week-one "Getting started" checklist state (device-local). { dismissed?, socialSeen? }.
 export const GETTING_STARTED_KEY = 'queGettingStarted';
+// Structured lifting program (split + prescribed sets/reps). Synced via SETTINGS_KEYS.
+export const LIFTING_PROGRAM_KEY = 'queLiftingProgram';
