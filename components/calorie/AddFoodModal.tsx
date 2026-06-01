@@ -695,7 +695,13 @@ export function AddFoodModal({ open, onClose, onAdd }: {
     if (code.length === 13 && code[0] === '0')  candidates.push(code.slice(1));
     try {
       for (const c of candidates) {
-        const res  = await fetch(`https://world.openfoodfacts.org/api/v0/product/${c}.json`);
+        // Same-origin proxy (/api/food/barcode) — a direct browser fetch to
+        // openfoodfacts.org is blocked by our CSP `connect-src 'self'`. The proxy
+        // relays OFF's `{ status, product }` shape unchanged. A non-OK response
+        // is a real lookup/network failure (surface it); status:0 with 200 means
+        // "not found" (try the next candidate).
+        const res = await fetch(`/api/food/barcode?code=${encodeURIComponent(c)}`);
+        if (!res.ok) throw new Error('lookup_failed');
         const data = await res.json() as { status: number; product?: OFFProduct };
         if (data.status === 1 && data.product?.product_name) {
           setSelectedProduct({ p: data.product, barcode: c, source: 'scan' });
