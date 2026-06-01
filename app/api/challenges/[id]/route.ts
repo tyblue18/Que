@@ -12,6 +12,7 @@
 
 import { getServerSession } from 'next-auth/next';
 import { NextResponse }     from 'next/server';
+import { Prisma }           from '@prisma/client';
 import { authOptions }      from '@/lib/auth';
 import { prisma }           from '@/lib/prisma';
 import { challengeLimit }   from '@/lib/ratelimit';
@@ -126,6 +127,13 @@ export async function POST(
       if (e instanceof Error && e.message === 'ALREADY_RESOLVED') {
         return NextResponse.json({ error: 'Challenge already resolved' }, { status: 409 });
       }
+      // Duplicate ante (concurrent accept) → the unique constraint rolled back
+      // this transaction; the wallet was debited once by the first accept. The
+      // status CAS would also catch the second accept, but the insert runs first
+      // so P2002 can surface — treat it as the already-resolved case.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        return NextResponse.json({ error: 'Challenge already resolved' }, { status: 409 });
+      }
       throw e;
     }
 
@@ -216,6 +224,11 @@ export async function POST(
       return NextResponse.json({ error: 'Not enough coins to accept this challenge' }, { status: 400 });
     }
     if (e instanceof Error && e.message === 'ALREADY_RESOLVED') {
+      return NextResponse.json({ error: 'Challenge already resolved' }, { status: 409 });
+    }
+    // Duplicate ante (concurrent accept) → unique constraint rolled back the tx;
+    // wallet debited once by the first accept. Treat as already-resolved.
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
       return NextResponse.json({ error: 'Challenge already resolved' }, { status: 409 });
     }
     throw e;

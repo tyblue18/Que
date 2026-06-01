@@ -107,6 +107,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (e instanceof Error && e.message === 'INSUFFICIENT_FUNDS') {
       return NextResponse.json({ error: 'Not enough coins' }, { status: 400 });
     }
+    // P2002 on the battle_bet insert = a concurrent/duplicate accept already
+    // anted this user (the [walletId,'battle_bet',refId] unique constraint). The
+    // transaction rolled back this duplicate decrement, so the wallet is correct
+    // (debited exactly once by the first accept). Resolve as idempotent success —
+    // the double-tapping user's accept went through, not an error.
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      return NextResponse.json({ ok: true, alreadyAccepted: true });
+    }
     throw e;
   }
 

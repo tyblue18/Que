@@ -91,6 +91,13 @@ const FAMILIES: Family[] = [
 const NAME_TO_FAMILY = new Map<string, Family>();
 for (const fam of FAMILIES) for (const n of fam.names) NAME_TO_FAMILY.set(n, fam);
 
+/** Display labels for the muscle-group keys (shared by every swap/custom UI). */
+export const MUSCLE_LABEL: Record<string, string> = {
+  chest: 'Chest', back: 'Back', shoulders: 'Shoulders', tricep: 'Triceps', bicep: 'Biceps',
+  forearms: 'Forearms', abs: 'Abs', quads: 'Quads', hamstring: 'Hamstrings', glutes: 'Glutes',
+  calfs: 'Calves', adductors: 'Adductors',
+};
+
 /**
  * All same-muscle variations a given exercise can be swapped for, INCLUDING the
  * exercise itself (so the current pick can be shown selected). Empty when the

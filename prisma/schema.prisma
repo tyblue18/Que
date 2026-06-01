@@ -252,6 +252,13 @@ model CoinTransaction {
   createdAt DateTime @default(now())
 
   @@index([walletId])
+  // DB-enforced idempotency: a given wallet can hold at most ONE transaction per
+  // (reason, refId). Closes the team/1v1 double-accept double-debit and the
+  // concurrent goal_hit double-award at the database layer — a duplicate insert
+  // raises P2002, which every coin write catches as already-done success.
+  // NULL refId rows (e.g. the one-time 'import') don't collide: Postgres treats
+  // NULLs as distinct in a unique index.
+  @@unique([walletId, reason, refId])
 }
 
 // ── Battles ────────────────────────────────────────────────────────────────────

@@ -118,20 +118,39 @@ export async function checkAndAwardCoins(
     coins: coinsForStreak(streakEndingAt(date, goalDaySet)),
   }));
 
-  const totalCoins = toAward.reduce((s, a) => s + a.coins, 0);
-
-  // 6. Write transactions and update balance atomically.
+  // 6. Write transactions and update balance atomically — idempotent against a
+  //    concurrent eval (the per-user Redis lock can fail open, so two runs can
+  //    race). We re-read the already-awarded goal_hit dates INSIDE the
+  //    transaction (authoritative, not the stale pre-tx read at step 3), insert
+  //    only the still-new ones, and increment the balance by exactly those. The
+  //    [walletId,'goal_hit',refId] unique constraint is the backstop: even if two
+  //    txs both pass the in-tx read, the second's insert raises P2002 and rolls
+  //    back, so a date is never awarded twice.
   const updated = await prisma.$transaction(async tx => {
-    await Promise.all(
-      toAward.map(a =>
-        tx.coinTransaction.create({
-          data: { walletId: wallet.id, amount: a.coins, reason: 'goal_hit', refId: a.date },
-        }),
-      ),
+    const already = new Set(
+      (await tx.coinTransaction.findMany({
+        where:  { walletId: wallet.id, reason: 'goal_hit' },
+        select: { refId: true },
+      })).map(t => t.refId).filter((r): r is string => r !== null),
     );
+    const fresh = toAward.filter(a => !already.has(a.date));
+    if (fresh.length === 0) return { balance: wallet.balance };
+
+    // NOTE: deliberately NO skipDuplicates. If a concurrent eval inserted any of
+    // these dates between our in-tx read and this write, the unique constraint
+    // raises P2002 and aborts the WHOLE transaction — rolling back the balance
+    // increment too, so rows-inserted and balance-incremented stay atomic (coins
+    // land all-or-nothing). skipDuplicates would suppress the throw and let the
+    // increment commit without the rows → double-credit. The caller's eval runs
+    // in after() and swallows the throw; the next sync re-reads and awards the
+    // still-new dates, so nothing is permanently lost.
+    await tx.coinTransaction.createMany({
+      data: fresh.map(a => ({ walletId: wallet.id, amount: a.coins, reason: 'goal_hit', refId: a.date })),
+    });
+    const freshCoins = fresh.reduce((s, a) => s + a.coins, 0);
     return tx.coinWallet.update({
       where: { id: wallet.id },
-      data:  { balance: { increment: totalCoins } },
+      data:  { balance: { increment: freshCoins } },
     });
   });
 

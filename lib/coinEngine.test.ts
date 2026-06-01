@@ -94,4 +94,48 @@ describe('checkAndAwardCoins', () => {
 
     expect(awarded.map(a => a.date)).toEqual([iso(0)]);
   });
+
+  // ── HIGH-2 DB backstop: the unique constraint rejects a duplicate goal_hit ──
+  // The per-user Redis lock can fail open, letting two evals race. The engine's
+  // in-tx re-read handles "the other eval already committed"; the
+  // [walletId,'goal_hit',refId] unique constraint handles "the other eval's row
+  // isn't visible yet" — a second insert of the same date raises P2002, which
+  // rolls back the whole transaction (balance increment included), so a date is
+  // never credited twice. True concurrent-transaction isolation isn't
+  // unit-testable (same as the sync CAS race), so we assert the DB backstop
+  // deterministically: a duplicate goal_hit triple is rejected.
+  it('GUARD: a duplicate goal_hit for the same date is rejected by the constraint', async () => {
+    const w = h.db.seedWallet('u1', 1);
+    const d = iso(-1);
+    await h.db.coinTransaction.create({ data: { walletId: w.id, amount: 1, reason: 'goal_hit', refId: d } });
+    await expect(
+      h.db.coinTransaction.create({ data: { walletId: w.id, amount: 1, reason: 'goal_hit', refId: d } }),
+    ).rejects.toMatchObject({ code: 'P2002' });
+    expect(h.db.txnsFor(d).filter(t => t.reason === 'goal_hit')).toHaveLength(1);
+  });
+
+  it('a re-run after a full award credits nothing more (in-tx re-read idempotency)', async () => {
+    h.db.seedWallet('u1', 0);
+    for (let i = 3; i >= 1; i--) h.db.seedDay('u1', iso(-i), goalDay);
+    await checkAndAwardCoins('u1', 0, null);          // first run awards 3
+    const after1 = h.db.walletOf('u1')!.balance;
+    const { awarded } = await checkAndAwardCoins('u1', 0, null); // second run
+    expect(after1).toBe(3);
+    expect(awarded).toHaveLength(0);                  // nothing new
+    expect(h.db.walletOf('u1')!.balance).toBe(3);     // not 6
+  });
+
+  // ── HIGH-1 DB backstop: duplicate battle_bet rejected (debit once) ──────────
+  // The team double-accept wrote a second battle_bet with the same (wallet,
+  // reason, refId). The constraint rejects the duplicate so the wallet is
+  // debited once. (Route-level P2002→idempotent-success handling is in the
+  // accept handlers; this asserts the DB layer it relies on.)
+  it('GUARD: a duplicate battle_bet for the same battle is rejected (debit once)', async () => {
+    const w = h.db.seedWallet('u1', 100);
+    await h.db.coinTransaction.create({ data: { walletId: w.id, amount: -10, reason: 'battle_bet', refId: 'battle-1' } });
+    await expect(
+      h.db.coinTransaction.create({ data: { walletId: w.id, amount: -10, reason: 'battle_bet', refId: 'battle-1' } }),
+    ).rejects.toMatchObject({ code: 'P2002' });
+    expect(h.db.txnsFor('battle-1').filter(t => t.reason === 'battle_bet')).toHaveLength(1);
+  });
 });

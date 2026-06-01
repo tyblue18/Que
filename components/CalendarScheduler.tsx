@@ -17,7 +17,7 @@ import {
   ChevronRight,
   Dumbbell,
   Flame,
-  Plus,
+  Repeat,
   X,
 } from 'lucide-react';
 import { useSpotlightBorder } from '@/hooks/useSpotlightBorder';
@@ -29,10 +29,11 @@ import {
   type DayRecord,
 } from '@/lib/AppContext';
 import { pushNow, gatherSettings } from '@/lib/syncEngine';
-import type { LiftingProgram } from '@/lib/lifting/program';
+import type { LiftingProgram, ProgramExercise } from '@/lib/lifting/program';
 import { weekAdjustedDays } from '@/lib/lifting/volume';
 import { buildProgramDayEntries, loadLiftPRs } from '@/lib/lifting/loadDay';
 import type { LoggedDay } from '@/lib/lifting/progression';
+import { alternativesFor, MUSCLE_LABEL } from '@/lib/lifting/alternatives';
 import { useUnits } from '@/lib/units';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -351,7 +352,14 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
   const u = useUnits();
   const [planAdded, setPlanAdded] = useState(false);
   const [planPickerOpen, setPlanPickerOpen] = useState(false);
-  const [planPicks, setPlanPicks] = useState<Set<number>>(new Set()); // selected exercise indices
+  const [planPicks, setPlanPicks] = useState<Set<number>>(new Set()); // selected indices
+  // Editable per-session copy of the day's exercises — swaps/custom replacements
+  // apply here before adding; the saved program isn't mutated by the calendar.
+  const [planExs, setPlanExs] = useState<ProgramExercise[]>([]);
+  const [planSwapIdx, setPlanSwapIdx] = useState<number | null>(null); // row with swap strip open
+  const [planCustomIdx, setPlanCustomIdx] = useState<number | null>(null); // row with custom form
+  const [planCustomName, setPlanCustomName] = useState('');
+
   const program = useMemo<LiftingProgram | null>(() => {
     try {
       const raw = localStorage.getItem(LIFTING_PROGRAM_KEY);
@@ -366,29 +374,44 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
     return { day: days[idx], idx };
   }, [program, todayStr]);
 
-  // Coached entries for the next-up day (built once) — the modal reads each
-  // exercise's pre-filled top-set weight from here to show the "~weight" hint.
-  const planEntryPreview = useMemo(() => {
-    if (!nextPlanDay) return [];
-    const entries = buildProgramDayEntries(
-      nextPlanDay.day, localDB as Record<string, LoggedDay>, todayStr, loadLiftPRs(LIFT_PRS_KEY),
-    );
-    return entries.map(e => ({ wLb: parseFloat(String(e.sets?.[0]?.w ?? '0')) || 0 }));
-  }, [nextPlanDay, localDB, todayStr]);
+  // Coached top-set weight per CURRENT (possibly swapped) exercise, in lb.
+  const planWeights = useMemo(() => {
+    if (planExs.length === 0) return [];
+    const day = { name: '', focus: '', exercises: planExs };
+    return buildProgramDayEntries(day, localDB as Record<string, LoggedDay>, todayStr, loadLiftPRs(LIFT_PRS_KEY))
+      .map(e => parseFloat(String(e.sets?.[0]?.w ?? '0')) || 0);
+  }, [planExs, localDB, todayStr]);
 
-  // Open the picker with every exercise pre-selected.
+  // Open the picker: seed the editable list + select all, reset swap/custom UI.
   const openPlanPicker = () => {
     if (!nextPlanDay) return;
+    setPlanExs(nextPlanDay.day.exercises.map(e => ({ ...e })));
     setPlanPicks(new Set(nextPlanDay.day.exercises.map((_, i) => i)));
+    setPlanSwapIdx(null); setPlanCustomIdx(null); setPlanCustomName('');
     setPlanPickerOpen(true);
   };
 
-  // Add only the checked exercises to today's session, in their listed order.
+  const togglePick = (i: number) => setPlanPicks(prev => {
+    const next = new Set(prev);
+    if (next.has(i)) next.delete(i); else next.add(i);
+    return next;
+  });
+
+  // Replace one exercise with a same-muscle variation OR a custom movement.
+  // Keeps the prescription (sets/reps/RIR/rest) and the muscle mapping, so
+  // volume counting + progression stay correct on the new movement.
+  const swapPlanExercise = (i: number, repl: { name: string; group: string; secondary: string[]; role: ProgramExercise['role'] }) => {
+    setPlanExs(prev => prev.map((ex, j) => j !== i ? ex : {
+      ...ex, name: repl.name, group: repl.group, secondary: repl.secondary, role: repl.role,
+    }));
+    setPlanSwapIdx(null); setPlanCustomIdx(null); setPlanCustomName('');
+  };
+
+  // Add only the checked (possibly-swapped) exercises to today's session.
   const confirmAddPlan = () => {
     if (!program || !nextPlanDay) return;
-    const all = buildProgramDayEntries(
-      nextPlanDay.day, localDB as Record<string, LoggedDay>, todayStr, loadLiftPRs(LIFT_PRS_KEY),
-    );
+    const day = { name: nextPlanDay.day.name, focus: nextPlanDay.day.focus, exercises: planExs };
+    const all = buildProgramDayEntries(day, localDB as Record<string, LoggedDay>, todayStr, loadLiftPRs(LIFT_PRS_KEY));
     const chosen = all.filter((_, i) => planPicks.has(i));
     if (chosen.length === 0) { setPlanPickerOpen(false); return; }
     window.dispatchEvent(new CustomEvent('que-load-program-day', {
@@ -396,7 +419,7 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
     }));
     // Advance the cursor only when the WHOLE day was added — a partial pick (the
     // user skipped some) shouldn't move them off this split day yet.
-    if (chosen.length === nextPlanDay.day.exercises.length) {
+    if (chosen.length === planExs.length) {
       try {
         const next = { ...program, cursor: (nextPlanDay.idx + 1) % program.days.length };
         localStorage.setItem(LIFTING_PROGRAM_KEY, JSON.stringify(next));
@@ -747,8 +770,8 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
                 title={`Add "${nextPlanDay.day.name}" from your lifting program to today`}
               >
                 {planAdded
-                  ? <><Check size={11} /> Added</>
-                  : <><Plus size={11} /> {nextPlanDay.day.name}</>}
+                  ? <><Check size={11} /> Added to session</>
+                  : <><Dumbbell size={11} /> Add {nextPlanDay.day.name} lifts</>}
               </button>
             )}
             <p className="font-mono text-[9px] text-[var(--ink-3)] tracking-[0.5px]">
@@ -996,37 +1019,102 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
                 {nextPlanDay.day.name}
               </p>
               <p className="font-mono text-[10px] text-[var(--ink-3)] tracking-[0.3px] mb-4">
-                Pick what you&apos;re doing today — log them in any order.
+                Pick what you&apos;re doing today. Tap <Repeat size={9} className="inline -mt-px" /> to swap any lift for one that hits the same muscle.
               </p>
 
-              <div className="flex flex-col gap-1.5 max-h-[46vh] overflow-y-auto -mx-1 px-1">
-                {planEntryPreview.map((p, i) => {
-                  const ex = nextPlanDay.day.exercises[i];
-                  const checked = planPicks.has(i);
+              <div className="flex flex-col gap-1.5 max-h-[52vh] overflow-y-auto -mx-1 px-1">
+                {planExs.map((ex, i) => {
+                  const checked  = planPicks.has(i);
+                  const wLb      = planWeights[i] ?? 0;
+                  const swapOpen = planSwapIdx === i;
+                  const customOpen = planCustomIdx === i;
                   return (
-                    <button
-                      key={i} type="button"
-                      onClick={() => setPlanPicks(prev => {
-                        const next = new Set(prev);
-                        if (next.has(i)) next.delete(i); else next.add(i);
-                        return next;
-                      })}
-                      className={`flex items-center gap-2.5 rounded-md border px-3 py-2 text-left transition-all ${
-                        checked
-                          ? 'border-[var(--accent)] bg-[var(--accent-12)]'
-                          : 'border-[var(--line-2)] bg-[var(--bg-2)] opacity-55'
+                    <div
+                      key={i}
+                      className={`rounded-md border px-2.5 py-2 transition-all ${
+                        checked ? 'border-[var(--accent)] bg-[var(--accent-12)]' : 'border-[var(--line-2)] bg-[var(--bg-2)] opacity-55'
                       }`}
                     >
-                      <span className={`flex-shrink-0 w-4 h-4 rounded-sm border flex items-center justify-center ${checked ? 'border-[var(--accent)] bg-[var(--accent)]' : 'border-[var(--line-3)]'}`}>
-                        {checked && <Check size={11} className="text-[var(--bg-0)]" />}
-                      </span>
-                      <span className="flex-1 min-w-0">
-                        <span className="block font-mono text-[11px] text-[var(--ink-1)] tracking-[0.2px] truncate">{ex.name}</span>
-                        <span className="block font-mono text-[8px] text-[var(--ink-3)] tracking-[0.3px]">
-                          {ex.sets} × {ex.repLow}-{ex.repHigh}{p.wLb > 0 ? ` · ~${u.fmtWeight(p.wLb)}` : ''}
-                        </span>
-                      </span>
-                    </button>
+                      <div className="flex items-center gap-2.5">
+                        {/* Toggle include/exclude */}
+                        <button
+                          type="button" onClick={() => togglePick(i)}
+                          className={`flex-shrink-0 w-4 h-4 rounded-sm border flex items-center justify-center ${checked ? 'border-[var(--accent)] bg-[var(--accent)]' : 'border-[var(--line-3)]'}`}
+                          aria-label={checked ? 'Exclude' : 'Include'}
+                        >
+                          {checked && <Check size={11} className="text-[var(--bg-0)]" />}
+                        </button>
+                        <button type="button" onClick={() => togglePick(i)} className="flex-1 min-w-0 text-left">
+                          <span className="block font-mono text-[11px] text-[var(--ink-1)] tracking-[0.2px] truncate">{ex.name}</span>
+                          <span className="block font-mono text-[8px] text-[var(--ink-3)] tracking-[0.3px]">
+                            {ex.sets} × {ex.repLow}-{ex.repHigh}{wLb > 0 ? ` · ~${u.fmtWeight(wLb)}` : ''} · {MUSCLE_LABEL[ex.group] ?? ex.group}
+                          </span>
+                        </button>
+                        {/* Swap / replace */}
+                        <button
+                          type="button"
+                          onClick={() => { setPlanSwapIdx(swapOpen ? null : i); setPlanCustomIdx(null); }}
+                          aria-label={`Swap or replace ${ex.name}`}
+                          className={`flex-shrink-0 transition-colors ${swapOpen ? 'text-[var(--accent)]' : 'text-[var(--ink-3)] hover:text-[var(--accent)]'}`}
+                        >
+                          <Repeat size={12} />
+                        </button>
+                      </div>
+
+                      {/* Compact same-muscle swap strip + custom replace */}
+                      {swapOpen && (
+                        <div className="mt-2 ml-[26px] pl-2 border-l border-[var(--line-2)]">
+                          <div className="flex flex-wrap gap-1.5">
+                            {alternativesFor(ex.name).map(alt => {
+                              const active = alt.name === ex.name;
+                              return (
+                                <button
+                                  key={alt.name} type="button"
+                                  onClick={() => swapPlanExercise(i, alt)}
+                                  className={`font-mono text-[9px] tracking-[0.2px] rounded-full px-2.5 py-1 border transition-all ${
+                                    active
+                                      ? 'border-[var(--accent)] bg-[var(--accent-12)] text-[var(--accent)]'
+                                      : 'border-[var(--line-2)] bg-[var(--bg-1)] text-[var(--ink-2)] hover:border-[var(--accent)] hover:text-[var(--accent)]'
+                                  }`}
+                                >
+                                  {active && <Check size={9} className="inline mr-1 -mt-px" />}{alt.name}
+                                </button>
+                              );
+                            })}
+                            <button
+                              type="button"
+                              onClick={() => { const c = customOpen ? null : i; setPlanCustomIdx(c); if (c !== null) setPlanCustomName(''); }}
+                              className={`font-mono text-[9px] tracking-[0.2px] rounded-full px-2.5 py-1 border border-dashed transition-all ${
+                                customOpen ? 'border-[var(--accent)] text-[var(--accent)]' : 'border-[var(--line-2)] text-[var(--ink-3)] hover:border-[var(--accent)] hover:text-[var(--accent)]'
+                              }`}
+                            >
+                              + Custom
+                            </button>
+                          </div>
+
+                          {customOpen && (
+                            <div className="mt-2 space-y-1.5">
+                              <input
+                                type="text" value={planCustomName} maxLength={40}
+                                onChange={e => setPlanCustomName(e.target.value)}
+                                placeholder="Exercise name"
+                                className="w-full rounded-sm border border-[var(--line-2)] bg-[var(--bg-1)] px-2 py-1.5 font-mono text-[10px] text-[var(--ink-1)] placeholder:text-[var(--ink-3)] focus:outline-none focus:border-[var(--accent)]"
+                              />
+                              <p className="font-mono text-[8px] text-[var(--ink-3)] tracking-[0.2px]">
+                                Stays a <span className="text-[var(--ink-2)]">{MUSCLE_LABEL[ex.group] ?? ex.group}</span> movement — pick anything that trains it.
+                              </p>
+                              <button
+                                type="button" disabled={!planCustomName.trim()}
+                                onClick={() => swapPlanExercise(i, { name: planCustomName.trim(), group: ex.group, secondary: ex.secondary, role: ex.role })}
+                                className="w-full rounded-sm bg-[var(--accent)] px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-[1px] text-[var(--bg-0)] hover:opacity-90 transition-opacity disabled:opacity-40"
+                              >
+                                Use this instead
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
               </div>

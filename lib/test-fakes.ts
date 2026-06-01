@@ -66,7 +66,11 @@ export interface FakePrisma {
     upsert(args: { where: { userId: string }; create: { userId: string; balance: number }; update: object; include?: { transactions?: { where?: { reason?: string } } } }): Promise<FakeWallet & { transactions?: FakeTxn[] }>;
     update(args: { where: { id: string }; data: { balance: { increment?: number; decrement?: number } } }): Promise<FakeWallet>;
   };
-  coinTransaction: { create(args: { data: { walletId: string; amount: number; reason: string; refId?: string | null } }): Promise<FakeTxn> };
+  coinTransaction: {
+    create(args: { data: { walletId: string; amount: number; reason: string; refId?: string | null } }): Promise<FakeTxn>;
+    createMany(args: { data: Array<{ walletId: string; amount: number; reason: string; refId?: string | null }>; skipDuplicates?: boolean }): Promise<{ count: number }>;
+    findMany(args: { where?: { walletId?: string; reason?: string }; select?: unknown }): Promise<Array<{ refId: string | null }>>;
+  };
   challenge:  {
     findUnique(args: { where: { id: string } }): Promise<FakeChallenge | null>;
     updateMany(args: { where: { id: string; status?: string }; data: Partial<FakeChallenge> }): Promise<{ count: number }>;
@@ -126,11 +130,48 @@ export function makeFakePrisma(): FakePrisma {
     },
   };
 
+  // Models the @@unique([walletId, reason, refId]) constraint: a non-null
+  // (walletId, reason, refId) triple can exist at most once. `create` throws a
+  // P2002-shaped error on a duplicate (like Prisma); `createMany` honors
+  // skipDuplicates. NULL refId never collides (Postgres treats NULLs distinct).
+  const triEq = (t: FakeTxn, walletId: string, reason: string, refId: string | null) =>
+    t.walletId === walletId && t.reason === reason && refId !== null && t.refId === refId;
+  const collides = (walletId: string, reason: string, refId: string | null) =>
+    refId !== null && fake.state.txns.some(t => triEq(t, walletId, reason, refId));
+
   fake.coinTransaction = {
     async create(args) {
+      const refId = args.data.refId ?? null;
+      if (collides(args.data.walletId, args.data.reason, refId)) {
+        const e = new Error('Unique constraint failed') as Error & { code: string };
+        e.code = 'P2002';
+        throw e;
+      }
       const t: FakeTxn = { id: `t${++fake.state.txnSeq}`, refId: null, ...args.data };
       fake.state.txns.push(t);
       return t;
+    },
+    async createMany(args) {
+      let count = 0;
+      for (const data of args.data) {
+        const refId = data.refId ?? null;
+        if (collides(data.walletId, data.reason, refId)) {
+          if (args.skipDuplicates) continue;
+          const e = new Error('Unique constraint failed') as Error & { code: string };
+          e.code = 'P2002';
+          throw e;
+        }
+        fake.state.txns.push({ id: `t${++fake.state.txnSeq}`, refId: null, ...data });
+        count++;
+      }
+      return { count };
+    },
+    async findMany(args) {
+      const w = args.where ?? {};
+      return fake.state.txns
+        .filter(t => w.walletId === undefined || t.walletId === w.walletId)
+        .filter(t => w.reason === undefined || t.reason === w.reason)
+        .map(t => ({ refId: t.refId }));
     },
   };
 

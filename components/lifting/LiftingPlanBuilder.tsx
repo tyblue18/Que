@@ -11,7 +11,7 @@ import {
   type LiftingProgram, type ProgramDay, type LiftGoal, type LiftExperience,
 } from '@/lib/lifting/program';
 import { progressionAdvice, type LoggedDay } from '@/lib/lifting/progression';
-import { alternativesFor, type AltMovement } from '@/lib/lifting/alternatives';
+import { alternativesFor, MUSCLE_LABEL, type AltMovement } from '@/lib/lifting/alternatives';
 import { buildProgramDayEntries } from '@/lib/lifting/loadDay';
 import {
   currentMeso, weekAdjustedDays, currentWeeklyVolume, deloadSignal, startNextMeso,
@@ -19,12 +19,6 @@ import {
 } from '@/lib/lifting/volume';
 
 // Pretty muscle labels for the weekly-volume readout.
-const MUSCLE_LABEL: Record<string, string> = {
-  chest: 'Chest', back: 'Back', shoulders: 'Shoulders', tricep: 'Triceps', bicep: 'Biceps',
-  forearms: 'Forearms', abs: 'Abs', quads: 'Quads', hamstring: 'Hamstrings', glutes: 'Glutes',
-  calfs: 'Calves', adductors: 'Adductors',
-};
-
 const DAY_OPTIONS = [2, 3, 4, 5, 6];
 const GOALS: Array<{ id: LiftGoal; label: string; hint: string }> = [
   { id: 'hypertrophy', label: 'Build muscle', hint: 'High volume, 0-3 RIR' },

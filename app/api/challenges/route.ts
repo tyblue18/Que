@@ -195,14 +195,11 @@ export async function POST(req: Request): Promise<NextResponse> {
   let challenge;
   try {
     challenge = await prisma.$transaction(async tx => {
-      // Bragging-rights battles (wager 0) move no coins and write no ledger row.
-      if (wager > 0) {
-        await debitWalletOrThrow(tx, wallet.id, wager);
-        await tx.coinTransaction.create({
-          data: { walletId: wallet.id, amount: -wager, reason: 'battle_bet' },
-        });
-      }
-      return tx.challenge.create({
+      // Create the challenge FIRST so the ante can carry refId: created.id — the
+      // [walletId, reason, refId] unique constraint needs it. The debit's
+      // overdraft throw still rolls back this create (same transaction), so no
+      // challenge persists for a user who can't afford the wager.
+      const created = await tx.challenge.create({
         data: {
           challengerId: me.id,
           challengeeId: friendId,
@@ -219,6 +216,14 @@ export async function POST(req: Request): Promise<NextResponse> {
           }),
         },
       });
+      // Bragging-rights battles (wager 0) move no coins and write no ledger row.
+      if (wager > 0) {
+        await debitWalletOrThrow(tx, wallet.id, wager);
+        await tx.coinTransaction.create({
+          data: { walletId: wallet.id, amount: -wager, reason: 'battle_bet', refId: created.id },
+        });
+      }
+      return created;
     });
   } catch (e) {
     if (e instanceof Error && e.message === 'INSUFFICIENT_FUNDS') {

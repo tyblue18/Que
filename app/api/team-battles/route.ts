@@ -148,12 +148,10 @@ export async function POST(req: Request): Promise<NextResponse> {
   let battleId: string;
   try {
     const created = await prisma.$transaction(async tx => {
-      if (wager > 0) {
-        const updated = await tx.coinWallet.update({ where: { id: wallet.id }, data: { balance: { decrement: wager } } });
-        if (updated.balance < 0) throw new Error('INSUFFICIENT_FUNDS');
-        await tx.coinTransaction.create({ data: { walletId: wallet.id, amount: -wager, reason: 'battle_bet' } });
-      }
-      return tx.teamBattle.create({
+      // Create the battle FIRST so the creator's ante can carry refId: battle.id —
+      // the [walletId, reason, refId] unique constraint needs it. The overdraft
+      // throw below still rolls back this create (same transaction).
+      const battle = await tx.teamBattle.create({
         data: {
           groupId, creatorId: meId, mode, wager, bestOf, windowKind, startDate, endDate,
           categories, status: 'pending',
@@ -161,6 +159,12 @@ export async function POST(req: Request): Promise<NextResponse> {
         },
         select: { id: true },
       });
+      if (wager > 0) {
+        const updated = await tx.coinWallet.update({ where: { id: wallet.id }, data: { balance: { decrement: wager } } });
+        if (updated.balance < 0) throw new Error('INSUFFICIENT_FUNDS');
+        await tx.coinTransaction.create({ data: { walletId: wallet.id, amount: -wager, reason: 'battle_bet', refId: battle.id } });
+      }
+      return battle;
     });
     battleId = created.id;
   } catch (e) {
