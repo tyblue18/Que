@@ -3,12 +3,16 @@
 /**
  * components/ConflictToast.tsx
  *
- * Surfaces multi-device sync conflicts to the user. The sync engine already
- * fires a `que-conflict` event with `detail: [{ date, data }, …]` whenever
- * the server returns one or more days where its row was newer than what the
- * client pushed (server data wins, client gets it back). Previously this
- * happened silently — the user would just see their just-typed values
- * flip without explanation. The toast makes the merge visible.
+ * Surfaces multi-device sync RECONCILIATIONS to the user. The sync engine fires
+ * a `que-conflict` event with `detail: [{ date, data, deferred? }, …]`. Under
+ * field-level merge no field is lost — the server reconciled two devices' edits
+ * to the same day — so the toast is INFORMATIONAL ("reconciled across devices"),
+ * not a data-loss warning.
+ *
+ * DEFERRED entries (CAS exhausted; the edit silently retries next sync) are
+ * filtered out — from the user's perspective nothing happened and the edit lands
+ * momentarily, so toasting it would alarm about a transient that self-heals. If
+ * an event carries only deferred entries, the toast stays silent.
  *
  * Auto-dismisses after 8 s. Stack-aware: a second conflict during the
  * display window replaces the message and resets the timer rather than
@@ -22,6 +26,7 @@ import { X } from 'lucide-react';
 interface ConflictDetail {
   date: string;
   data: unknown;
+  deferred?: boolean;
 }
 
 function fmtDate(ds: string): string {
@@ -35,8 +40,11 @@ export function ConflictToast() {
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<ConflictDetail[]>).detail;
-      if (!Array.isArray(detail) || detail.length === 0) return;
-      setConflicts(detail);
+      if (!Array.isArray(detail)) return;
+      // Only genuine merge reconciliations surface; deferred retries stay silent.
+      const visible = detail.filter(c => !c.deferred);
+      if (visible.length === 0) return;
+      setConflicts(visible);
     };
     window.addEventListener('que-conflict', handler);
     return () => window.removeEventListener('que-conflict', handler);
@@ -70,9 +78,9 @@ export function ConflictToast() {
             </p>
             <p className="font-mono text-[10px] text-[var(--ink-1)] leading-relaxed tracking-[0.3px]">
               {conflicts.length === 1 ? (
-                <>We kept the newer copy of <strong className="text-[var(--ink-0)]">{fmtDate(conflicts[0].date)}</strong> from another device.</>
+                <>Merged your edits to <strong className="text-[var(--ink-0)]">{fmtDate(conflicts[0].date)}</strong> with changes from another device.</>
               ) : (
-                <>We kept newer copies of <strong className="text-[var(--ink-0)]">{conflicts.length} days</strong> from another device ({fmtDate(conflicts[0].date)}–{fmtDate(conflicts[conflicts.length - 1].date)}).</>
+                <>Merged <strong className="text-[var(--ink-0)]">{conflicts.length} days</strong> with changes from another device ({fmtDate(conflicts[0].date)}–{fmtDate(conflicts[conflicts.length - 1].date)}).</>
               )}
             </p>
           </div>

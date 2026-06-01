@@ -242,19 +242,29 @@ async function _push(payload: SyncPayload, attempt = 0): Promise<void> {
     if (res.ok) {
       const json = await res.json() as {
         syncedAt?:      string;
-        conflicts?:     Array<{ date: string; data: unknown }>;
+        conflicts?:     Array<{ date: string; data: unknown; deferred?: boolean }>;
         newBadges?:     Array<{ slug: string; label: string; icon: string; category: string }>;
         revokedBadges?: Array<{ slug: string; label: string; icon: string; category: string }>;
         newCoins?:      Array<{ date: string; coins: number }>;
         walletBalance?: number;
       };
       if (json.conflicts?.length) {
-        // Server won these days — write them to localStorage and notify AppContext
+        // Two kinds (see /api/sync): a MERGE conflict carries the server's merged
+        // day → adopt it into localStorage. A DEFERRED one (deferred: true) carries
+        // NO data → we must NOT touch localStorage for it (the user's pending edit
+        // is still there and must re-send unchanged). Only merge conflicts are
+        // written back here; both kinds are passed to AppContext, which keeps a
+        // deferred date dirty so the debounced sync retries it.
         try {
           const raw = localStorage.getItem(DB_KEY);
           const db  = (raw ? JSON.parse(raw) : {}) as Record<string, unknown>;
-          for (const { date, data } of json.conflicts) db[date] = data;
-          localStorage.setItem(DB_KEY, JSON.stringify(db));
+          let wrote = false;
+          for (const { date, data, deferred } of json.conflicts) {
+            if (deferred) continue;           // leave the pending edit untouched
+            db[date] = data;
+            wrote = true;
+          }
+          if (wrote) localStorage.setItem(DB_KEY, JSON.stringify(db));
           window.dispatchEvent(new CustomEvent('que-conflict', { detail: json.conflicts }));
         } catch { /* storage full — skip */ }
       }

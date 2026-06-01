@@ -20,6 +20,8 @@ import { checkAndAwardCoins }      from '@/lib/coinEngine';
 import type { CoinAward }          from '@/lib/coinEngine';
 import { syncLimit }               from '@/lib/ratelimit';
 import { syncPostSchema }          from '@/lib/validators';
+import { commitDayWithMerge, type DayCasStore } from '@/lib/dayCommit';
+import type { MergeableDay }       from '@/lib/dayMerge';
 
 const redis = new Redis({
   url:   process.env.KV_REST_API_URL!,
@@ -128,91 +130,82 @@ export async function POST(req: Request): Promise<NextResponse> {
   });
 
   // ── Each day goes to its own DayRecord row (with conflict detection) ─────────
-  const conflicts: Array<{ date: string; data: unknown }> = [];
+  // A conflict entry is either a MERGE conflict (server reconciled fields; client
+  // adopts the merged day) or a DEFERRED one (`deferred: true` — the CAS commit
+  // exhausted retries under pathological same-day contention). The client treats
+  // them differently: adopt-and-clear-dirty for a merge, keep-dirty-and-retry for
+  // a deferral (see the que-conflict handler).
+  const conflicts: Array<{ date: string; data: unknown; deferred?: boolean }> = [];
 
   if (body.localDB && Object.keys(body.localDB).length > 0) {
-    const dates = Object.keys(body.localDB);
-
-    // Single query to fetch all existing rows for these dates
-    const existingRows = await (prisma as unknown as {
-      dayRecord: {
-        findMany: (args: unknown) => Promise<Array<{ date: string; updatedAt: Date; data: unknown }>>;
-      };
-    }).dayRecord.findMany({
-      where:  { userId, date: { in: dates } },
-      select: { date: true, updatedAt: true, data: true },
-    });
-    const existingMap = new Map(existingRows.map((r: { date: string; updatedAt: Date; data: unknown }) => [r.date, r]));
-
-    const toUpsert: Array<{ date: string; data: unknown }> = [];
     // 60s tolerance for legitimate clock skew between client browser and server.
     const FUTURE_TOLERANCE_MS = 60_000;
     const now = Date.now();
 
-    for (const [date, rawData] of Object.entries(body.localDB)) {
-      const incoming = rawData as Record<string, unknown>;
-      const syncedAt = incoming._syncedAt as string | undefined;
-      const editedAt = incoming._editedAt as string | undefined;
-      // Strip transport fields before storing. _syncedAt is recomputed on
-      // every read; _editedAt is persisted as part of the data so multi-device
-      // newer-wins comparisons survive future syncs.
-      const { _syncedAt: _, ...cleanData } = incoming;
-
-      const stored = existingMap.get(date) as { date: string; updatedAt: Date; data: unknown } | undefined;
-
-      if (stored) {
-        // Prefer edit-time chronology when the incoming write carries
-        // _editedAt. Multi-device case: phone edits at 10:01 then syncs;
-        // laptop edits the same day at 10:30 (hasn't pulled phone's edit)
-        // then syncs at 10:31. _editedAt comparison keeps the laptop write
-        // because it's chronologically newer — _syncedAt would reject it
-        // since the laptop's last pull was older than the phone's push.
-        if (editedAt) {
-          const editedAtMs   = new Date(editedAt).getTime();
-          const storedEdited = (stored.data as { _editedAt?: string })._editedAt;
-          const storedEditMs = storedEdited ? new Date(storedEdited).getTime() : 0;
-          const malformed    = !Number.isFinite(editedAtMs) || editedAtMs > now + FUTURE_TOLERANCE_MS;
-          if (malformed || editedAtMs < storedEditMs) {
-            conflicts.push({
-              date,
-              data: { ...(stored.data as object), _syncedAt: stored.updatedAt.toISOString() },
-            });
-            continue;
-          }
-          // Newer or equal edit time → accept the write.
-        } else if (syncedAt) {
-          // Legacy client without _editedAt — fall back to stale-write check.
-          const syncedAtMs = new Date(syncedAt).getTime();
-          const untrustworthy =
-            !Number.isFinite(syncedAtMs) ||
-            syncedAtMs > now + FUTURE_TOLERANCE_MS ||
-            stored.updatedAt.getTime() > syncedAtMs;
-          if (untrustworthy) {
-            conflicts.push({
-              date,
-              data: { ...(stored.data as object), _syncedAt: stored.updatedAt.toISOString() },
-            });
-            continue;
-          }
-        }
-      }
-
-      toUpsert.push({ date, data: cleanData });
-    }
-
-    const dr = (prisma as unknown as {
-      dayRecord: { upsert: (args: unknown) => Promise<unknown> };
+    // Prisma-backed store for the per-day CAS commit. DayRecord isn't in the
+    // generated static types in this repo (cast as the rest of this file does);
+    // updateMany's `count` is the compare-and-set on `updatedAt`.
+    const drClient = (prisma as unknown as {
+      dayRecord: {
+        findUnique: (a: unknown) => Promise<{ data: unknown; updatedAt: Date } | null>;
+        create:     (a: unknown) => Promise<unknown>;
+        updateMany: (a: unknown) => Promise<{ count: number }>;
+      };
     }).dayRecord;
 
-    await Promise.all(
-      toUpsert.map(({ date, data }) =>
-        dr.upsert({
-          where:  { userId_date: { userId, date } },
-          create: { userId, date, data },
-          update: { data },
-        })
-      )
-    );
+    const store: DayCasStore = {
+      async read(uid, date) {
+        const row = await drClient.findUnique({
+          where:  { userId_date: { userId: uid, date } },
+          select: { data: true, updatedAt: true },
+        });
+        return row ? { data: row.data as MergeableDay, updatedAt: row.updatedAt } : null;
+      },
+      async create(uid, date, data) {
+        // Throws P2002 if the row already exists (lost a create race) — the
+        // commit loop catches that and re-reads onto the update path.
+        await drClient.create({ data: { userId: uid, date, data } });
+      },
+      async casUpdate(uid, date, data, expected) {
+        // Compare-and-set: write only if updatedAt still matches what we read.
+        // count === 0 ⇒ a concurrent push wrote in the gap ⇒ the loop re-reads.
+        const { count } = await drClient.updateMany({
+          where: { userId: uid, date, updatedAt: expected },
+          data:  { data },
+        });
+        return count;
+      },
+    };
+
+    for (const [date, rawData] of Object.entries(body.localDB)) {
+      // Strip the transport-only _syncedAt before it ever reaches the merge or
+      // the store; _editedAt / _fieldEditedAt are real data the merge needs.
+      const { _syncedAt: _drop, ...incoming } = rawData as Record<string, unknown>;
+
+      const result = await commitDayWithMerge(
+        store, userId, date, incoming as MergeableDay, now, FUTURE_TOLERANCE_MS,
+      );
+
+      if (result.status === 'deferred') {
+        // Failed closed after MAX_ATTEMPTS CAS losses (pathological same-day
+        // contention). Mark the day DEFERRED so the client keeps it dirty and
+        // re-sends the SAME pending edit next sync — it must NOT adopt server
+        // state (that would overwrite the very edit we're preserving and re-send
+        // server data instead). We send no `data`: the client leaves its local
+        // copy and its honest _fieldEditedAt untouched and just retries.
+        conflicts.push({ date, data: null, deferred: true });
+      } else if (result.localWonFields.length > 0) {
+        // The stored row beat the push on ≥1 field — the merge reconciled them.
+        // Return the MERGED day so the client ADOPTS it (not just toasts): its
+        // local copy is now stale for the fields the server knew about, and
+        // without write-back the next edit would re-push stale and ping-pong.
+        const current = await store.read(userId, date);
+        conflicts.push({
+          date,
+          data: { ...(result.merged as object), _syncedAt: (current?.updatedAt ?? new Date()).toISOString() },
+        });
+      }
+    }
   }
 
   // Badge + coin evaluation runs in the BACKGROUND (after the response is sent)

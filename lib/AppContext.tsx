@@ -26,6 +26,7 @@ import React, {
 } from 'react';
 import { queueSync, pushNow, flushPending, pullFromCloud, restoreSettings } from '@/lib/syncEngine';
 import { DB_KEY, PROFILE_KEY } from '@/lib/constants';
+import { mergeDays, stampEditedFields, type MergeableDay } from '@/lib/dayMerge';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -118,6 +119,11 @@ export interface DayRecord {
   /** Server-provided sync timestamp — stripped on every local edit so the server
    *  always accepts the client's dirty writes without triggering a false conflict. */
   _syncedAt?: string;
+  /** ISO time this day was last edited (whole-day; ordering + legacy fallback). */
+  _editedAt?: string;
+  /** Per-field edit times powering field-level merge (lib/dayMerge). Absent on
+   *  days created before field-level merge existed — merge falls back to _editedAt. */
+  _fieldEditedAt?: Record<string, string>;
 }
 
 /** Keyed by "YYYY-MM-DD" */
@@ -445,22 +451,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // overwrite them. Now we compare _editedAt and keep the newer one.
         // Dirty days (edited this session) are still skipped — those get
         // pushed to cloud immediately and shouldn't be touched by the pull.
-        const pickNewer = (
-          local:  Record<string, unknown> | undefined,
+        // Per-FIELD merge (lib/dayMerge), replacing the old whole-day pickNewer.
+        // ORIENTATION: local = THIS device's day, incoming = the REMOTE pulled
+        // day. mergeDays gives ties to `incoming` (= remote), preserving the
+        // prior "remote wins equal/missing timestamps so cron-side writes
+        // propagate" rule — now applied per field, so a remote weight and a
+        // local foods edit to the same day both survive instead of one clobbering
+        // the other. Days edited THIS session (dirtyDaysRef) are still skipped —
+        // they push to cloud and shouldn't be pulled over.
+        const mergeRemote = (
+          local: Record<string, unknown> | undefined,
           remoteRec: Record<string, unknown>,
-        ): Record<string, unknown> => {
-          if (!local) return remoteRec;
-          const localEdited  = typeof local._editedAt  === 'string' ? new Date(local._editedAt).getTime()  : 0;
-          const remoteEdited = typeof remoteRec._editedAt === 'string' ? new Date(remoteRec._editedAt).getTime() : 0;
-          // Tie-break: remote wins on equal/missing timestamps so cron-side
-          // writes (steps, etc.) propagate to all devices.
-          return remoteEdited >= localEdited ? remoteRec : local;
-        };
+        ): Record<string, unknown> =>
+          local
+            ? (mergeDays(local as MergeableDay, remoteRec as MergeableDay).merged as Record<string, unknown>)
+            : remoteRec;
         setLocalDB(prev => {
           const next: Record<string, DayRecord> = { ...prev };
           for (const [date, remoteData] of Object.entries(remoteDB)) {
             if (dirtyDaysRef.current.has(date)) continue;
-            next[date] = pickNewer(
+            next[date] = mergeRemote(
               prev[date] as Record<string, unknown> | undefined,
               remoteData as Record<string, unknown>,
             ) as DayRecord;
@@ -472,7 +482,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           const merged: Record<string, unknown> = { ...local };
           for (const [date, remoteData] of Object.entries(remoteDB)) {
             if (dirtyDaysRef.current.has(date)) continue;
-            merged[date] = pickNewer(
+            merged[date] = mergeRemote(
               local[date] as Record<string, unknown> | undefined,
               remoteData as Record<string, unknown>,
             );
@@ -548,15 +558,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Merge server-won days back into React state when the sync engine detects a conflict.
   useEffect(() => {
     const handler = (e: Event) => {
-      const conflicts = (e as CustomEvent<Array<{ date: string; data: unknown }>>).detail;
+      const conflicts = (e as CustomEvent<Array<{ date: string; data: unknown; deferred?: boolean }>>).detail;
       if (!Array.isArray(conflicts) || conflicts.length === 0) return;
       setLocalDB(prev => {
         const next = { ...prev };
-        for (const { date, data } of conflicts) {
+        let changed = false;
+        for (const { date, data, deferred } of conflicts) {
+          if (deferred) {
+            // DEFERRED (CAS exhausted): the user's pending edit must survive and
+            // re-send. Do NOT adopt server state (it would overwrite that edit and
+            // re-send server data) and do NOT delete the dirty flag — leaving the
+            // date dirty is exactly what makes the next debounced sync retry the
+            // still-honestly-stamped edit. So: touch nothing here.
+            continue;
+          }
+          // MERGE conflict: server reconciled fields → adopt the merged day and
+          // drop the dirty flag so we don't re-push what the server just resolved.
           next[date] = data as DayRecord;
-          dirtyDaysRef.current.delete(date); // don't re-push what the server just won
+          dirtyDaysRef.current.delete(date);
+          changed = true;
         }
-        try { localStorage.setItem(DB_KEY, JSON.stringify(next)); } catch { /* noop */ }
+        if (changed) { try { localStorage.setItem(DB_KEY, JSON.stringify(next)); } catch { /* noop */ } }
         return next;
       });
     };
@@ -628,15 +650,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // step update) trick the conflict check into returning server data and
         // deleting the user's in-progress edits.
         const { _syncedAt: _, ...prevDay } = prev[dateStr] ?? {};
-        // Stamp _editedAt with the local edit time. The server uses this to
-        // pick the newer edit when two devices write to the same day (instead
-        // of "whoever syncs first wins"). Always Date.now() — even if the
-        // client clock is skewed, the server's 60s tolerance + ordering check
-        // keep behavior sane, and a missing _editedAt would defeat the
-        // newer-wins logic for any subsequent device.
+        const nowIso = new Date().toISOString();
+        // Per-FIELD edit stamps drive field-level merge (lib/dayMerge): only the
+        // keys this edit touched advance, so two devices editing DIFFERENT fields
+        // of the same day both survive. stampEditedFields stamps by key PRESENCE
+        // (so a cleared field — weight:0, foods:'[]' — gets a fresh stamp and
+        // beats a stale value) and BACKFILLS a once-legacy day's untouched fields
+        // from its old whole-day _editedAt first, so they keep their honest time.
+        const fieldEditedAt = stampEditedFields(
+          prevDay as MergeableDay,
+          Object.keys(updates),
+          nowIso,
+        );
         const next = {
           ...prev,
-          [dateStr]: { ...prevDay, ...updates, _editedAt: new Date().toISOString() },
+          // Whole-day _editedAt retained for ordering + legacy-client fallback.
+          [dateStr]: { ...prevDay, ...updates, _editedAt: nowIso, _fieldEditedAt: fieldEditedAt },
         };
         try {
           localStorage.setItem(DB_KEY, JSON.stringify(next));

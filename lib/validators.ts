@@ -179,3 +179,9 @@ export const pushDeleteSchema = z.object({
 export const foodSearchSchema = z.object({
   q: z.string().min(1).max(200),
 });
+
+// ── /api/feedback POST (user suggestions) ──────────────────────────────────────
+
+export const feedbackSchema = z.object({
+  message: z.string().trim().min(1).max(1000),
+});

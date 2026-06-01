@@ -150,8 +150,13 @@ function currentWorkoutStreak(localDB: Record<string, { exercises?: string }>): 
 function weekLiftVolume(localDB: Record<string, { exercises?: string }>): number {
   const num = (v: unknown) => { const n = parseFloat(String(v ?? '0')); return Number.isFinite(n) ? n : 0; };
   let total = 0;
+  // Calendar week, NOT a rolling 7 days: count from the most recent Sunday
+  // (start of this week) through today, so the total RESETS to 0 each Sunday
+  // when the weekly recap fires — instead of just dropping the oldest day as it
+  // slides out of a trailing window. getDay() is 0 on Sunday, so the window is
+  // [today - getDay() .. today]; on Sunday that's just today.
   const today = new Date();
-  for (let i = 0; i < 7; i++) {
+  for (let i = today.getDay(); i >= 0; i--) {
     const d = new Date(today); d.setDate(d.getDate() - i);
     const raw = localDB[dStr(d)]?.exercises;
     if (!raw) continue;

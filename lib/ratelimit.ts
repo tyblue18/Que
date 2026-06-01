@@ -119,3 +119,11 @@ export const pushTestLimit = new Ratelimit({
   limiter: Ratelimit.slidingWindow(10, '1 m'),
   prefix:  'rl:pushtest',
 });
+
+// 5 suggestion submissions per user per minute. Each one pushes a notification
+// to the app owner, so a tight cap stops a single user from spamming the owner.
+export const feedbackLimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(5, '1 m'),
+  prefix:  'rl:feedback',
+});

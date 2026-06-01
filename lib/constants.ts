@@ -69,3 +69,7 @@ export const REST_TIMER_KEY     = 'queRestTimer';
 export const GETTING_STARTED_KEY = 'queGettingStarted';
 // Structured lifting program (split + prescribed sets/reps). Synced via SETTINGS_KEYS.
 export const LIFTING_PROGRAM_KEY = 'queLiftingProgram';
+
+// App owner — the account that receives user-submitted suggestions
+// (/api/feedback push). Same address used for the web-push VAPID contact.
+export const OWNER_EMAIL = 'tanishqsomania21@gmail.com';

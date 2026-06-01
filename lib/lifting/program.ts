@@ -91,6 +91,12 @@ export interface LiftingProgram {
   protein:        ProteinTarget | null;
   createdAt:      string;         // YYYY-MM-DD
   cursor:         number;         // index of the NEXT day to train (advances on start)
+  /** Anchor for the volume-progression mesocycle (lib/lifting/volume.ts). The
+   *  current week — and thus how many sets to add this week vs. deload — is
+   *  derived from this date. Optional so programs created before the volume
+   *  ramp existed keep working (volume.ts falls back to createdAt). */
+  mesoStartDate?: string;         // YYYY-MM-DD
+  mesoWeeks?:     number;         // mesocycle length (default 5: 4 ramp + 1 deload)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -256,6 +262,7 @@ export function generateProgram(inputs: LiftingInputs): LiftingProgram {
     }),
   }));
 
+  const today = new Date().toISOString().slice(0, 10);
   return {
     daysPerWeek: days,
     goal,
@@ -265,8 +272,10 @@ export function generateProgram(inputs: LiftingInputs): LiftingProgram {
     weeklyVolume: computeWeeklyVolume(programDays),
     weeklyTarget: WEEKLY_TARGET[goal][experience],
     protein: inputs.bodyweightKg ? proteinTargets(inputs.bodyweightKg) : null,
-    createdAt: new Date().toISOString().slice(0, 10),
+    createdAt: today,
     cursor: 0,
+    mesoStartDate: today,   // week 1 of the first mesocycle starts now
+    mesoWeeks: 5,
   };
 }
 

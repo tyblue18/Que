@@ -96,3 +96,58 @@ describe('sync failure recovery', () => {
     expect(sync.getSyncStatus()).toBe('ok');
   });
 });
+
+describe('conflict adoption — merge vs. deferred', () => {
+  const D = '2026-02-01';
+  const userEdit = { weight: '999', _fieldEditedAt: { weight: '2026-02-01T10:00:00Z' } };
+
+  it('a MERGE conflict overwrites localStorage with the server merged day', async () => {
+    const serverMerged = { weight: '180', foods: '[server]', _syncedAt: 'x' };
+    fetchMock.mockReturnValue(resp(200, {
+      syncedAt: 'x',
+      conflicts: [{ date: D, data: serverMerged }], // no `deferred` → merge
+    }));
+    store[ 'ironmanCoreDB_v2' ] = JSON.stringify({ [D]: userEdit });
+    const sync = await loadSync();
+    sync.pushNow({ localDB: { [D]: userEdit } });
+    await vi.runAllTimersAsync();
+
+    const db = JSON.parse(store['ironmanCoreDB_v2']);
+    expect(db[D]).toMatchObject(serverMerged); // adopted the server merge
+  });
+
+  it('GUARD: a DEFERRED conflict leaves the local edit UNTOUCHED (it must re-send)', async () => {
+    fetchMock.mockReturnValue(resp(200, {
+      syncedAt: 'x',
+      conflicts: [{ date: D, data: null, deferred: true }],
+    }));
+    // The user's pending edit is in localStorage before the deferred response.
+    store['ironmanCoreDB_v2'] = JSON.stringify({ [D]: userEdit });
+    const sync = await loadSync();
+    sync.pushNow({ localDB: { [D]: userEdit } });
+    await vi.runAllTimersAsync();
+
+    const db = JSON.parse(store['ironmanCoreDB_v2']);
+    // Assertion 1 (the one doing the real work): localStorage still holds the
+    // USER'S edit with its honest field-stamp — NOT overwritten with null/server
+    // state. This fails against the old delete-and-overwrite behavior.
+    expect(db[D]).toEqual(userEdit);
+    expect(db[D]._fieldEditedAt.weight).toBe('2026-02-01T10:00:00Z'); // honest timestamp intact
+  });
+
+  it('passes the deferred flag through the que-conflict event (so AppContext keeps it dirty)', async () => {
+    fetchMock.mockReturnValue(resp(200, {
+      syncedAt: 'x',
+      conflicts: [{ date: D, data: null, deferred: true }],
+    }));
+    store['ironmanCoreDB_v2'] = JSON.stringify({ [D]: userEdit });
+    const sync = await loadSync();
+    sync.pushNow({ localDB: { [D]: userEdit } });
+    await vi.runAllTimersAsync();
+
+    const evt = dispatched.find(d => d.type === 'que-conflict');
+    expect(evt).toBeTruthy();
+    const detail = evt!.detail as Array<{ date: string; deferred?: boolean }>;
+    expect(detail[0]).toMatchObject({ date: D, deferred: true });
+  });
+});

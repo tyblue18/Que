@@ -102,7 +102,9 @@ function UserPill({ image, name, email }: UserPillProps) {
   const displayName = name ?? email ?? 'Athlete';
   const [localPhoto, setLocalPhoto]   = useState<string | null>(null);
   const [open, setOpen]               = useState(false);
-  const [view, setView]               = useState<'menu' | 'settings' | 'scheme' | 'start'>('menu');
+  const [view, setView]               = useState<'menu' | 'settings' | 'scheme' | 'start' | 'feedback'>('menu');
+  const [feedbackText, setFeedbackText] = useState('');
+  const [feedbackState, setFeedbackState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [accentHex, setAccentHex]     = useState('#4FC3F7');
   const [bgLabel, setBgLabel]         = useState('Charcoal');
   const [theme, setTheme]             = useState<Theme>('dark');
@@ -138,7 +140,7 @@ function UserPill({ image, name, email }: UserPillProps) {
   }, []);
 
   useEffect(() => {
-    if (!open) { setView('menu'); setStartSaved(false); setCopied(false); return; }
+    if (!open) { setView('menu'); setStartSaved(false); setCopied(false); setFeedbackText(''); setFeedbackState('idle'); return; }
     const p = loadPlanData();
     setPlan(p);
     if (p) { setEditWeight(String(p.startWeight)); setEditDate(p.startDate); }
@@ -257,7 +259,7 @@ function UserPill({ image, name, email }: UserPillProps) {
       </button>
 
       {open && (
-        <div className={`auth-dropdown${view === 'scheme' || view === 'start' ? ' auth-dropdown--wide' : ''}`} role="menu">
+        <div className={`auth-dropdown${view === 'scheme' || view === 'start' || view === 'feedback' ? ' auth-dropdown--wide' : ''}`} role="menu">
 
           {view === 'menu' ? (
             <>
@@ -312,6 +314,14 @@ function UserPill({ image, name, email }: UserPillProps) {
                 </svg>
                 About &amp; Support
               </Link>
+
+              <button type="button" role="menuitem" className="auth-dropdown-item"
+                onClick={() => setView('feedback')}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+                Send Suggestions
+              </button>
 
               <div className="auth-dropdown-divider" />
 
@@ -455,6 +465,59 @@ function UserPill({ image, name, email }: UserPillProps) {
                     Update plan start
                   </button>
                 )}
+              </div>
+            </>
+          ) : view === 'feedback' ? (
+            <>
+              <button type="button" className="auth-scheme-back" onClick={() => setView('menu')}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polyline points="15 18 9 12 15 6"/>
+                </svg>
+                Send Suggestions
+              </button>
+
+              <div className="auth-dropdown-divider" />
+
+              <div className="px-3 py-2">
+                <p className="font-mono text-[10px] text-[var(--ink-3)] leading-relaxed tracking-[0.3px] mb-2">
+                  Got an idea or found a bug? Send it straight to the developer.
+                </p>
+                <textarea
+                  value={feedbackText}
+                  onChange={e => { setFeedbackText(e.target.value); if (feedbackState !== 'idle') setFeedbackState('idle'); }}
+                  maxLength={1000}
+                  rows={4}
+                  placeholder="Your suggestion…"
+                  className="w-full rounded-sm border border-[var(--line-2)] bg-[var(--bg-2)] p-2 font-mono text-[11px] text-[var(--ink-1)] placeholder:text-[var(--ink-3)] resize-none focus:outline-none focus:border-[var(--accent)] transition-colors"
+                />
+                <div className="flex items-center justify-between mt-1">
+                  <span className="font-mono text-[8px] text-[var(--ink-3)]">{feedbackText.length}/1000</span>
+                  {feedbackState === 'sent'  && <span className="font-mono text-[8px] text-[var(--accent)]">Thanks — sent! 🎉</span>}
+                  {feedbackState === 'error' && <span className="font-mono text-[8px] text-[var(--danger)]">Couldn’t send — try again</span>}
+                </div>
+                <button
+                  type="button"
+                  disabled={!feedbackText.trim() || feedbackState === 'sending'}
+                  onClick={async () => {
+                    setFeedbackState('sending');
+                    try {
+                      const res = await fetch('/api/feedback', {
+                        method:  'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body:    JSON.stringify({ message: feedbackText.trim() }),
+                      });
+                      if (!res.ok) throw new Error('failed');
+                      setFeedbackState('sent');
+                      setFeedbackText('');
+                      setTimeout(() => { setOpen(false); }, 1200);
+                    } catch {
+                      setFeedbackState('error');
+                    }
+                  }}
+                  className="w-full mt-2 font-mono text-[10px] font-bold tracking-[1px] uppercase py-2 rounded-sm bg-[var(--accent)] text-[var(--bg-0)] hover:opacity-90 transition-opacity disabled:opacity-40"
+                >
+                  {feedbackState === 'sending' ? 'Sending…' : feedbackState === 'sent' ? 'Sent ✓' : 'Send suggestion'}
+                </button>
               </div>
             </>
           ) : (
