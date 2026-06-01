@@ -11,6 +11,7 @@ import { userPatchSchema }     from '@/lib/validators';
 import { normalizeBadgeIcons } from '@/lib/badgeEngine';
 import { getBattleRecord }     from '@/lib/battleEngine';
 import { PROFILE_PHOTO_KEY }   from '@/lib/constants';
+import { userLimit }           from '@/lib/ratelimit';
 
 export async function GET(): Promise<NextResponse> {
   const session = await getServerSession(authOptions);
@@ -52,6 +53,9 @@ export async function GET(): Promise<NextResponse> {
 export async function PATCH(req: Request): Promise<NextResponse> {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) return NextResponse.json(null, { status: 401 });
+
+  const { success } = await userLimit.limit(session.user.id);
+  if (!success) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
 
   let raw: unknown;
   try { raw = await req.json(); }

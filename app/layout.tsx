@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { headers } from 'next/headers';
 import { Anton, Space_Grotesk, JetBrains_Mono } from 'next/font/google';
 import { Analytics } from '@vercel/analytics/next';
 import { AuthProvider } from '@/components/auth-provider';
@@ -72,9 +73,13 @@ export const viewport: Viewport = {
   // has ignored user-scalable=no since iOS 10). WCAG 1.4.4 requires zoom support.
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  // CSP nonce minted per-request in middleware. Threading it onto the inline
+  // theme script below is what lets a nonce-based policy allow that one script
+  // without `'unsafe-inline'`.
+  const nonce = (await headers()).get('x-nonce') ?? undefined;
   return (
     <html
       lang="en"
@@ -83,7 +88,7 @@ export default function RootLayout({
     >
       {/* Blocking script: sets data-theme before first paint to prevent flash */}
       <head>
-        <script dangerouslySetInnerHTML={{ __html: `(function(){try{if(localStorage.getItem('${THEME_KEY}')==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}})()` }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: `(function(){try{if(localStorage.getItem('${THEME_KEY}')==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}})()` }} />
       </head>
       <body className="font-sans antialiased">
         <AuthProvider>

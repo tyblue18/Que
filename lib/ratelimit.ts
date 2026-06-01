@@ -86,3 +86,36 @@ export const leaderboardLimit = new Ratelimit({
   limiter: Ratelimit.slidingWindow(30, '1 m'),
   prefix:  'rl:leaderboard',
 });
+
+// 10 profile-photo uploads per user per minute. Each upload writes to Vercel
+// Blob (storage + bandwidth quota), so an authenticated user shouldn't be able
+// to loop the endpoint and burn the project's storage budget.
+export const photoLimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(10, '1 m'),
+  prefix:  'rl:photo',
+});
+
+// 20 profile updates per user per minute (username / status / showcase). Caps
+// username-squatting probes and status spam; generous for real editing.
+export const userLimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(20, '1 m'),
+  prefix:  'rl:user',
+});
+
+// 10 badge re-scans per user per minute. /api/badges/cleanup runs a full
+// DayRecord-history re-evaluation, so an unbounded caller could load the DB.
+export const badgeLimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(10, '1 m'),
+  prefix:  'rl:badge',
+});
+
+// 10 self-test pushes per user per minute. Only ever notifies the caller, so
+// impact is low, but a cap stops a script from looping the push service.
+export const pushTestLimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(10, '1 m'),
+  prefix:  'rl:pushtest',
+});

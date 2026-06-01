@@ -8,6 +8,21 @@ const nextConfig = {
     NEXT_PUBLIC_BUILD_TIME: String(Date.now()),
   },
 
+  // Alias lottie-web → its LIGHT build. The full build ships an animation-
+  // expression engine that uses eval()/new Function(), which forces
+  // `'unsafe-eval'` into our CSP script-src (defeating the point of a strict
+  // policy). The light build drops that evaluator (and the unused canvas/html
+  // renderers) but keeps loadAnimation + the SVG renderer, so our expression-
+  // free Lottie files (lottie-react only calls loadAnimation) render
+  // identically — with zero eval in the bundle.
+  webpack(config) {
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      'lottie-web': 'lottie-web/build/player/lottie_light.js',
+    };
+    return config;
+  },
+
   // Skip ESLint during `next build` — it's a meaningful chunk of build time on
   // the Hobby plan's limited CPU and is redundant with editor/CI linting.
   // Type-checking stays ON (Next still type-checks the build) so we never ship
@@ -67,16 +82,18 @@ const nextConfig = {
         ],
       },
       {
-        // Baseline security headers on every response. Intentionally NO
-        // Content-Security-Policy yet — a strict CSP needs nonces for Next's
-        // inline scripts + the blocking theme script and must be tested on a
-        // preview deploy before shipping, or it silently breaks the app.
-        // `camera=(self)` is required so the barcode scanner's getUserMedia works.
+        // Baseline security headers on every response. The Content-Security-
+        // Policy is NOT here — it's nonce-based and set per-request in
+        // middleware.ts (lib/csp.ts), since a static header can't carry a
+        // per-request nonce. `camera=(self)` is required so the barcode
+        // scanner's getUserMedia works.
         source: '/(.*)',
         headers: [
           { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
           { key: 'X-Content-Type-Options',    value: 'nosniff' },
-          { key: 'X-Frame-Options',           value: 'SAMEORIGIN' },
+          // DENY matches the CSP `frame-ancestors 'none'` set in middleware —
+          // the app is never meant to be embedded in a frame.
+          { key: 'X-Frame-Options',           value: 'DENY' },
           { key: 'Referrer-Policy',           value: 'strict-origin-when-cross-origin' },
           { key: 'Permissions-Policy',        value: 'camera=(self), microphone=(), geolocation=()' },
           { key: 'X-DNS-Prefetch-Control',    value: 'on' },

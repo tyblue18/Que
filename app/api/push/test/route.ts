@@ -2,11 +2,15 @@ import { getServerSession } from 'next-auth/next';
 import { NextResponse }     from 'next/server';
 import { authOptions }      from '@/lib/auth';
 import { sendPushToUser }   from '@/lib/push';
+import { pushTestLimit }    from '@/lib/ratelimit';
 
 export async function POST(req: Request): Promise<NextResponse> {
   void req;
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) return NextResponse.json(null, { status: 401 });
+
+  const { success } = await pushTestLimit.limit(session.user.id);
+  if (!success) return NextResponse.json({ ok: false, reason: 'rate_limited' }, { status: 429 });
 
   const result = await sendPushToUser(session.user.id, {
     title: 'Que — notifications working ✓',

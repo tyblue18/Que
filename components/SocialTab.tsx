@@ -1115,11 +1115,11 @@ export default function SocialTab() {
   const [activeBattles, setActiveBattles] = useState<ChallengeData[]>([]);
   const [resolved,      setResolved]      = useState<ChallengeData[]>([]);
   const [viewBattleId,  setViewBattleId]  = useState<string | null>(null);
-  const [balance,       setBalance]       = useState<number>(() => {
-    if (typeof window === 'undefined') return 0;
-    try { return (JSON.parse(localStorage.getItem(COIN_KEY) ?? 'null') as { total?: number } | null)?.total ?? 0; }
-    catch { return 0; }
-  });
+  // Seeded at 0 and corrected to the authoritative server wallet by refresh().
+  // We deliberately do NOT seed from the local queCalorieCoins ledger — that
+  // counter can run ahead of the wallet, and a wager is only spendable against
+  // the wallet, so showing the local number would mislead (see refresh()).
+  const [balance,       setBalance]       = useState<number>(0);
   const [addQuery,      setAddQuery]      = useState('');
   const [addStatus,     setAddStatus]     = useState<{ ok: boolean; msg: string } | null>(null);
   const [loading,       setLoading]       = useState(true);
@@ -1153,19 +1153,16 @@ export default function SocialTab() {
         const localPhoto = localStorage.getItem(PROFILE_PHOTO_KEY);
         if (localPhoto) data.profilePhoto = localPhoto;
       }
-      // Client coin ledger may be ahead of the DB (coins are awarded locally
-      // on each calorie goal hit; the DB only syncs via the one-time migration).
-      // Show whichever balance is higher so the card matches the header counter.
-      try {
-        const localCoins = JSON.parse(localStorage.getItem(COIN_KEY) ?? 'null') as { total?: number } | null;
-        const localTotal = localCoins?.total ?? 0;
-        const dbTotal    = data.coinBalance ?? 0;
-        setOwnProfile({ ...data, coinBalance: Math.max(dbTotal, localTotal) });
-      } catch {
-        setOwnProfile(data);
-      }
+      // The server wallet (data.coinBalance) is AUTHORITATIVE for competitive
+      // play — battle wagers are deducted from it server-side. The local
+      // queCalorieCoins ledger is an optimistic display counter that can drift
+      // ahead of the wallet (different award cadence), so we must NOT show it
+      // here: doing so let users "see 40" but only be able to wager their real
+      // wallet balance. Display == spendable.
+      const dbTotal = data.coinBalance ?? 0;
+      setOwnProfile({ ...data, coinBalance: dbTotal });
+      setBalance(dbTotal);
     }
-    try { setBalance((JSON.parse(localStorage.getItem(COIN_KEY) ?? 'null') as { total?: number } | null)?.total ?? 0); } catch { /* ignore */ }
     if (friendRes.ok) {
       const d = await friendRes.json();
       setFriends(d.friends   ?? []);

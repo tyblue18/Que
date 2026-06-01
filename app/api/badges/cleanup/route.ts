@@ -14,6 +14,7 @@ import { NextResponse }     from 'next/server';
 import { authOptions }      from '@/lib/auth';
 import { prisma }           from '@/lib/prisma';
 import { checkAndAwardBadges } from '@/lib/badgeEngine';
+import { badgeLimit }        from '@/lib/ratelimit';
 
 // Which DayRecord fields to zero out per badge slug when force-deleting.
 const BADGE_FIELDS: Record<string, string[]> = {
@@ -47,6 +48,9 @@ export async function POST(req: Request): Promise<NextResponse> {
   if (!session?.user?.id) return NextResponse.json(null, { status: 401 });
 
   const userId = session.user.id;
+
+  const { success } = await badgeLimit.limit(userId);
+  if (!success) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
 
   // ── Mode 2: force-delete specific slugs ──────────────────────────────────────
   let force: string[] = [];

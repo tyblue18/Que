@@ -13,6 +13,7 @@
 
 import { NextResponse }   from 'next/server';
 import { prisma }         from '@/lib/prisma';
+import { isAuthorizedCron } from '@/lib/cronAuth';
 import { sendPushToUser } from '@/lib/push';
 import { mapWithConcurrency } from '@/lib/asyncBatch';
 
@@ -37,8 +38,7 @@ function localParts(tzOffsetMin: number): { date: string; hour: number } {
 }
 
 export async function GET(req: Request): Promise<NextResponse> {
-  const auth = req.headers.get('authorization');
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isAuthorizedCron(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

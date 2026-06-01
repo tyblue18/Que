@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth/next';
 import { NextResponse }     from 'next/server';
 import { authOptions }      from '@/lib/auth';
 import { prisma }           from '@/lib/prisma';
+import { photoLimit }       from '@/lib/ratelimit';
 
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
@@ -27,6 +28,9 @@ function detectImageType(bytes: Uint8Array): 'image/jpeg' | 'image/png' | 'image
 export async function POST(req: Request): Promise<NextResponse> {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) return NextResponse.json(null, { status: 401 });
+
+  const { success } = await photoLimit.limit(session.user.id);
+  if (!success) return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
 
   const form = await req.formData();
   const file = form.get('photo') as File | null;
