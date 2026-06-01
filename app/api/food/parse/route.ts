@@ -40,6 +40,12 @@ const redis = new Redis({
 // Feature is "configured" when an OpenAI key is present; absent → feature hidden.
 const aiConfigured = () => !!process.env.OPENAI_API_KEY;
 
+/** Cheap capability probe — the client calls this on open to decide whether to
+ *  show the Quick Log tab at all (no model call, no auth needed). */
+export async function GET(): Promise<NextResponse> {
+  return NextResponse.json({ configured: aiConfigured() });
+}
+
 // Small, cheap, fast — parsing is a trivial task for a mini model. The OpenAI
 // provider reads OPENAI_API_KEY from the environment.
 const PARSE_MODEL = openai('gpt-4o-mini');

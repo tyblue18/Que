@@ -491,8 +491,13 @@ export default function CalorieTracker() {
   const handleWeightChange = useCallback((val: string) => {
     setTodayWeight(val);
     updateDayRecord(activeDayFocus, { weight: val });
-    if (val && parseFloat(val) > 0) persistProfile({ weight: val });
-  }, [activeDayFocus, updateDayRecord, persistProfile]);
+    // Mirror TODAY's check-in weight into the profile (the BMR/Athlete-Profile
+    // weight) so the two stay in sync — but ONLY for today. Editing a PAST day's
+    // weight (correcting an old log) must not overwrite the current body weight.
+    if (activeDayFocus === todayStr && val && parseFloat(val) > 0) {
+      persistProfile({ weight: val });
+    }
+  }, [activeDayFocus, todayStr, updateDayRecord, persistProfile]);
 
   const undereatingWarning = useMemo(() => {
     const days = Object.keys(localDB).sort().reverse();

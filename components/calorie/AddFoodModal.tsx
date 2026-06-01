@@ -558,7 +558,7 @@ export function AddFoodModal({ open, onClose, onAdd }: {
 }) {
   // Default to 'search' — landing on a list of the user's frequent/recent
   // foods is faster than camera priming for most daily use.
-  const [mode,            setMode]           = useState<'scan' | 'search' | 'myfoods'>('search');
+  const [mode,            setMode]           = useState<'scan' | 'search' | 'quicklog' | 'myfoods'>('search');
   const [searchQuery,     setSearchQuery]    = useState('');
   const [searchResults,   setSearchResults]  = useState<OFFProduct[]>([]);
   const [searching,       setSearching]      = useState(false);
@@ -580,8 +580,10 @@ export function AddFoodModal({ open, onClose, onAdd }: {
   const [nlText,    setNlText]    = useState('');
   const [nlParsing, setNlParsing] = useState(false);
   const [nlItems,   setNlItems]   = useState<Array<{ query: string; quantity: number; matched: boolean; product?: OFFProduct }> | null>(null);
-  // null until the first parse tells us whether the server has a key configured.
-  const [nlEnabled, setNlEnabled] = useState(true);
+  // Whether the Quick Log feature is available (server has an AI key). Probed
+  // once on open via GET /api/food/parse so the tab's presence is correct from
+  // the start — never shows a tab that would dead-end.
+  const [nlEnabled, setNlEnabled] = useState(false);
   const videoRef      = useRef<HTMLVideoElement>(null);
   const controlsRef   = useRef<{ stop: () => void } | null>(null);
   const debounceRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -594,6 +596,14 @@ export function AddFoodModal({ open, onClose, onAdd }: {
   useEffect(() => {
     if (open && !zxingRef.current) {
       import('@zxing/browser').then(mod => { zxingRef.current = mod; }).catch(() => {});
+    }
+    if (open) {
+      // Probe whether Quick Log is available so we only show its tab when the
+      // server can actually parse (no key → tab never appears). Cheap GET.
+      fetch('/api/food/parse')
+        .then(r => r.ok ? r.json() : { configured: false })
+        .then((d: { configured?: boolean }) => setNlEnabled(!!d.configured))
+        .catch(() => setNlEnabled(false));
     }
     if (!open) {
       setMode('search'); setSearchQuery(''); setSearchResults([]);
@@ -775,7 +785,7 @@ export function AddFoodModal({ open, onClose, onAdd }: {
         items?: Array<{ query: string; quantity: number; matched: boolean; product?: OFFProduct }>;
         error?: string;
       };
-      if (data.configured === false) { setNlEnabled(false); return; } // feature off server-side
+      if (data.configured === false) { setNlEnabled(false); setMode('search'); return; } // feature off → fall back to search
       if (!res.ok) { setError(data.error ?? 'Could not read that — try searching instead.'); return; }
       const items = data.items ?? [];
       setNlItems(items);
@@ -862,17 +872,19 @@ export function AddFoodModal({ open, onClose, onAdd }: {
               ) : (
                 <motion.div key="browse" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
                 <>
-                  {/* Mode tabs */}
+                  {/* Mode tabs — Quick Log only appears when the server has an AI
+                      key (nlEnabled), so there's never a dead tab. */}
                   <div className="flex bg-[var(--bg-2)] border border-[var(--line)] rounded-sm p-1 gap-0.5 mb-4">
                     {([
                     ['scan',    'Scan',     Camera],
                     ['search',  'Search',   Search],
-                    ['myfoods', 'My Foods', BookOpen],
+                    ...(nlEnabled ? [['quicklog', 'Quick', Sparkles] as const] : []),
+                    ['myfoods', 'Foods', BookOpen],
                   ] as const).map(([id, label, Icon]) => (
                       <button
                         key={id}
                         type="button"
-                        onClick={() => { setMode(id); stopCamera(); setError(''); }}
+                        onClick={() => { setMode(id); stopCamera(); setError(''); setNlItems(null); }}
                         className={[
                           'flex-1 flex items-center justify-center gap-1.5 py-2 rounded-sm font-mono text-[9px] font-bold tracking-[0.5px] uppercase transition-all',
                           mode === id ? 'bg-[var(--accent)] text-[var(--accent-ink)]' : 'text-[var(--ink-2)] hover:text-[var(--ink-0)]',
@@ -957,73 +969,84 @@ export function AddFoodModal({ open, onClose, onAdd }: {
                     </div>
                   )}
 
-                  {/* ── SEARCH MODE ── */}
-                  {mode === 'search' && (
+                  {/* ── QUICK LOG MODE (natural-language) ── */}
+                  {mode === 'quicklog' && (
                     <div className="space-y-3">
-                      {/* Natural-language quick log — type a sentence, get grounded
-                          items. Hidden if the server has no AI key configured. */}
-                      {nlEnabled && (
-                        <div className="rounded-lg border border-[var(--accent)]/40 bg-[var(--accent-12)] p-2.5">
-                          <div className="flex items-center gap-1.5 mb-1.5">
-                            <Sparkles size={12} className="text-[var(--accent)]" />
-                            <span className="font-mono text-[9px] font-bold uppercase tracking-[1px] text-[var(--accent)]">Quick log</span>
-                          </div>
-                          <div className="flex gap-2">
-                            <input
-                              type="text" className="que-input flex-1"
-                              placeholder="e.g. 2 eggs and a banana"
-                              value={nlText} maxLength={300}
-                              onChange={e => setNlText(e.target.value)}
-                              onKeyDown={e => e.key === 'Enter' && runParse(nlText)}
-                            />
-                            <button
-                              type="button"
-                              onClick={() => runParse(nlText)}
-                              disabled={!nlText.trim() || nlParsing}
-                              className="que-btn-primary px-3 flex-shrink-0 disabled:opacity-40"
-                            >
-                              {nlParsing ? '…' : <Sparkles size={15} />}
-                            </button>
-                          </div>
+                      {/* Explainer — so a first-time user immediately understands
+                          what this is and that the numbers are trustworthy. */}
+                      <div className="flex items-start gap-2">
+                        <Sparkles size={14} className="text-[var(--accent)] flex-shrink-0 mt-0.5" />
+                        <p className="font-mono text-[10px] text-[var(--ink-2)] leading-relaxed tracking-[0.2px]">
+                          Describe your meal in plain words — like <span className="text-[var(--ink-0)]">“2 eggs and a banana”</span> — and we’ll find each food for you. Calories come from the food database, so you can trust them.
+                        </p>
+                      </div>
 
-                          {nlItems && nlItems.length > 0 && (
-                            <div className="mt-2 space-y-1.5">
-                              {nlItems.map((it, i) => it.matched && it.product ? (
-                                <button
-                                  key={i} type="button"
-                                  onClick={() => setSelectedProduct({ p: it.product!, source: 'nl', servings: it.quantity })}
-                                  className="w-full flex items-center justify-between gap-3 rounded-md border border-[var(--line-2)] bg-[var(--bg-2)] px-3 py-2 text-left hover:border-[var(--accent)] transition-colors"
-                                >
-                                  <div className="min-w-0">
-                                    <p className="font-mono text-[11px] font-semibold text-[var(--ink-0)] truncate">
-                                      {it.quantity > 1 ? `${it.quantity}× ` : ''}{it.product.product_name}
-                                    </p>
-                                    <p className="font-mono text-[8px] text-[var(--ink-3)]">tap to review &amp; add</p>
-                                  </div>
-                                  <Plus size={14} className="text-[var(--accent)] flex-shrink-0" />
-                                </button>
-                              ) : (
-                                <div key={i} className="flex items-center justify-between gap-3 rounded-md border border-dashed border-[var(--line-2)] px-3 py-2">
-                                  <p className="font-mono text-[10px] text-[var(--ink-3)] truncate">
-                                    “{it.query}” — not found
-                                  </p>
-                                  <button
-                                    type="button"
-                                    onClick={() => { setNlItems(null); setNlText(''); handleSearchChange(it.query); }}
-                                    className="font-mono text-[9px] font-bold uppercase tracking-[0.5px] text-[var(--accent)] flex-shrink-0"
-                                  >
-                                    Search
-                                  </button>
-                                </div>
-                              ))}
-                              <p className="font-mono text-[8px] text-[var(--ink-3)] tracking-[0.2px] pt-0.5">
-                                Calories come from the food database — tap an item to confirm the serving.
+                      <div className="flex gap-2">
+                        <input
+                          type="text" className="que-input flex-1"
+                          placeholder="What did you eat?"
+                          value={nlText} maxLength={300}
+                          onChange={e => setNlText(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && runParse(nlText)}
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          onClick={() => runParse(nlText)}
+                          disabled={!nlText.trim() || nlParsing}
+                          className="que-btn-primary px-4 flex-shrink-0 disabled:opacity-40"
+                        >
+                          {nlParsing ? '…' : <Sparkles size={16} />}
+                        </button>
+                      </div>
+
+                      {nlItems && nlItems.length > 0 && (
+                        <div className="space-y-1.5">
+                          <p className="font-mono text-[9px] font-bold uppercase tracking-[1px] text-[var(--ink-3)]">
+                            Tap to add ({nlItems.filter(i => i.matched).length} found)
+                          </p>
+                          {nlItems.map((it, i) => it.matched && it.product ? (
+                            <button
+                              key={i} type="button"
+                              onClick={() => setSelectedProduct({ p: it.product!, source: 'nl', servings: it.quantity })}
+                              className="w-full flex items-center justify-between gap-3 rounded-md border border-[var(--line-2)] bg-[var(--bg-2)] px-3 py-2.5 text-left hover:border-[var(--accent)] transition-colors"
+                            >
+                              <div className="min-w-0">
+                                <p className="font-mono text-[11px] font-semibold text-[var(--ink-0)] truncate">
+                                  {it.quantity > 1 ? `${it.quantity}× ` : ''}{it.product.product_name}
+                                </p>
+                                <p className="font-mono text-[8px] text-[var(--ink-3)]">tap to review &amp; add</p>
+                              </div>
+                              <Plus size={15} className="text-[var(--accent)] flex-shrink-0" />
+                            </button>
+                          ) : (
+                            <div key={i} className="flex items-center justify-between gap-3 rounded-md border border-dashed border-[var(--line-2)] px-3 py-2.5">
+                              <p className="font-mono text-[10px] text-[var(--ink-3)] truncate">
+                                “{it.query}” — not found
                               </p>
+                              <button
+                                type="button"
+                                onClick={() => { setNlItems(null); setNlText(''); setMode('search'); handleSearchChange(it.query); }}
+                                className="font-mono text-[9px] font-bold uppercase tracking-[0.5px] text-[var(--accent)] flex-shrink-0"
+                              >
+                                Search
+                              </button>
                             </div>
-                          )}
+                          ))}
                         </div>
                       )}
 
+                      {!nlItems && !nlParsing && (
+                        <p className="font-mono text-[9px] text-[var(--ink-3)] tracking-[0.3px] text-center pt-2">
+                          You can list several foods at once.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ── SEARCH MODE ── */}
+                  {mode === 'search' && (
+                    <div className="space-y-3">
                       <div className="flex gap-2">
                         <input
                           type="text" className="que-input flex-1"

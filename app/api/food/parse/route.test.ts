@@ -24,7 +24,7 @@ vi.mock('@/lib/ratelimit', () => ({ foodParseLimit: { limit: async () => ({ succ
 vi.mock('next-auth/next', () => ({ getServerSession: async () => ({ user: { id: 'u1' } }) }));
 vi.mock('@/lib/auth', () => ({ authOptions: {} }));
 
-import { POST } from '@/app/api/food/parse/route';
+import { POST, GET } from '@/app/api/food/parse/route';
 
 const req = (body: unknown) =>
   new Request('http://localhost/api/food/parse', {
@@ -103,5 +103,13 @@ describe('POST /api/food/parse', () => {
     const res = await POST(req({ text: 'egg' }));
     const body = await res.json();
     expect(body.items[0].quantity).toBe(1);
+  });
+
+  it('GET probe reports configured state (drives whether the tab shows)', async () => {
+    const on = await (await GET()).json();
+    expect(on.configured).toBe(true);
+    delete process.env.OPENAI_API_KEY;
+    const off = await (await GET()).json();
+    expect(off.configured).toBe(false);
   });
 });
