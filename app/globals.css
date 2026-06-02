@@ -526,6 +526,17 @@ html, body { height: 100%; background: var(--bg-0); color: var(--ink-0); }
   .auth-wordmark { font-size: 18px; letter-spacing: 4px; }
   .auth-user-name { display: none; }
   .auth-user-pill { gap: 6px; padding-right: 8px; }
+
+  /* Hero mobile balance: trim the heavy top whitespace, and stack the logo
+     ABOVE the title so an 88px tile isn't fighting the big two-line headline
+     for width on a ~360px screen. */
+  .lp-hero { padding: 48px 20px 44px; }
+  .lp-hero-inner { gap: 16px; }
+  .lp-hero-titlerow { flex-direction: column; align-items: flex-start; gap: 14px; }
+  .lp-hero-logo { width: 64px; }
+  /* The 4-line subhead becomes a wall on a phone — cap its measure so it wraps
+     to a tighter block, and ease the line-height. */
+  .lp-hero-sub { font-size: 15px; line-height: 1.55; }
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -1059,6 +1070,21 @@ html, body { height: 100%; background: var(--bg-0); color: var(--ink-0); }
   border: 1px solid var(--accent-24);
   border-radius: 100px;
   padding: 5px 12px;
+}
+.lp-hero-titlerow {
+  display: flex;
+  align-items: center;
+  gap: clamp(14px, 3vw, 24px);
+}
+.lp-hero-logo {
+  /* Scale to the two-line title block (≈ 2 × line-height of the display font). */
+  width: clamp(88px, 20vw, 150px);
+  height: auto;
+  flex-shrink: 0;
+  /* The source PNG has a white background — present it as an intentional rounded
+     brand tile rather than a clashing white rectangle on the dark hero. */
+  border-radius: 18px;
+  box-shadow: 0 0 0 1px var(--line-2), 0 0 32px var(--accent-24);
 }
 .lp-hero-title {
   font-family: var(--font-display);

@@ -15,29 +15,29 @@ import { InviteBanner } from '@/components/landing/InviteBanner';
 
 const FEATURES = [
   {
+    icon: Zap,
+    title: 'Coaching for lift AND run',
+    body: 'Evidence-based lifting progression (volume, RIR, deloads) and a Jack Daniels VDOT running engine — in one plan, not two apps.',
+  },
+  {
+    icon: Utensils,
+    title: 'Nutrition that knows your training',
+    body: 'Search foods, scan barcodes, hit macros — and your budget eats back the calories your training actually burned. Your food knows your workouts.',
+  },
+  {
+    icon: BarChart2,
+    title: 'Metrics & Trends',
+    body: 'Body weight trends, calorie history, PRs, and a cut/bulk plan with progress tracking — adapting to what you actually log.',
+  },
+  {
     icon: Calendar,
     title: 'Workout Calendar',
     body: 'Log every lift, set, and rep. Visual month view shows your training density at a glance.',
   },
   {
-    icon: Utensils,
-    title: 'Calorie Tracker',
-    body: 'Search millions of foods, scan barcodes, and hit your macro targets every day.',
-  },
-  {
-    icon: BarChart2,
-    title: 'Metrics & Trends',
-    body: 'Body weight trends, calorie history, PRs, and a cut/bulk plan with progress tracking.',
-  },
-  {
     icon: Users,
     title: 'Social & Challenges',
     body: 'Follow friends, compare stats, and wager coins on head-to-head fitness challenges.',
-  },
-  {
-    icon: Zap,
-    title: 'Science-Based Plans',
-    body: 'Cut and bulk plans on real exercise science (Mifflin-St Jeor, ACSM, the Compendium), with cardio counted net of rest. More rigorous than the plans most apps charge for.',
   },
   {
     icon: Award,
@@ -47,9 +47,9 @@ const FEATURES = [
 ] as const;
 
 const STATS = [
-  { value: '5', label: 'tabs. One app.' },
+  { value: '3→1', label: 'lift · run · fuel, connected' },
   { value: 'PWA', label: 'works offline' },
-  { value: '∞', label: 'food database' },
+  { value: '1', label: 'plan for lift + run + food' },
 ] as const;
 
 const PREVIEWS = [
@@ -87,17 +87,21 @@ export default function LandingPage() {
         <div className="lp-hero-inner">
           <div className="lp-hero-badge">
             <Dumbbell size={12} aria-hidden="true" />
-            <span>Athlete OS</span>
+            <span>Lift · Run · Fuel</span>
           </div>
 
-          <h1 className="lp-hero-title">
-            Train.<br />Eat.<br />Repeat.
-          </h1>
+          <div className="lp-hero-titlerow">
+            <Image src={queLogo} alt="" width={150} height={150} className="lp-hero-logo" priority aria-hidden="true" />
+            <h1 className="lp-hero-title">
+              One body.<br />One app.
+            </h1>
+          </div>
 
           <p className="lp-hero-sub">
-            Que is a personal training log and calorie tracker built for athletes
-            who take their data seriously. Log workouts, hit macros, track your
-            cut or bulk, and compete with friends.
+            You lift, you run, you track your macros — in three apps that don&apos;t
+            talk to each other. Que is the one that does: it coaches your lifting
+            and your running, and adapts your nutrition to both. Because it&apos;s
+            all the same body.
           </p>
 
           <div className="lp-hero-actions">
@@ -124,8 +128,8 @@ export default function LandingPage() {
       {/* ── Features ── */}
       <section className="lp-features">
         <div className="lp-features-inner">
-          <p className="lp-section-label">Everything in one place</p>
-          <h2 className="lp-section-title">Built for the daily grind</h2>
+          <p className="lp-section-label">What the others can&apos;t do</p>
+          <h2 className="lp-section-title">Your training and your nutrition, finally connected</h2>
 
           <div className="lp-feature-grid">
             {FEATURES.map(({ icon: Icon, title, body }) => (
@@ -172,8 +176,8 @@ export default function LandingPage() {
       <section className="lp-cta-band">
         <div className="lp-cta-inner">
           <TrendingUp size={32} className="lp-cta-icon" aria-hidden="true" />
-          <h2 className="lp-cta-title">Ready to level up?</h2>
-          <p className="lp-cta-sub">Free to use. Offline-first. Your data stays yours.</p>
+          <h2 className="lp-cta-title">Stop juggling three apps.</h2>
+          <p className="lp-cta-sub">One app for your lifting, your running, and your nutrition. Free, offline-first, your data stays yours.</p>
           <InstallCTA className="lp-btn-primary lp-btn-lg" label="Start tracking" />
         </div>
       </section>

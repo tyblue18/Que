@@ -204,7 +204,7 @@ function GoalStep({ onSubmit }: { onSubmit: (goal: Goal, pace: PlanIntensity) =>
           What&apos;s your goal?
         </h1>
         <p className="font-mono text-[10px] text-[var(--ink-3)] tracking-[1px] leading-relaxed">
-          This sets your daily calorie target. You can fine-tune it anytime in Metrics → Plan.
+          This sets your nutrition target — and it&apos;ll adapt to the training you log. Fine-tune anytime in Metrics → Plan.
         </p>
       </div>
 

@@ -2,6 +2,7 @@
 
 import React, {
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -360,12 +361,20 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
   const [planCustomIdx, setPlanCustomIdx] = useState<number | null>(null); // row with custom form
   const [planCustomName, setPlanCustomName] = useState('');
 
+  // `program` is read from localStorage, which is empty during SSR + the first
+  // client render. Gate the plan button on a post-mount flag so the server and
+  // first client paint AGREE (button absent), avoiding a hydration mismatch —
+  // the button then appears after mount. mountedForPlan flips true only in the
+  // client effect below.
+  const [mountedForPlan, setMountedForPlan] = useState(false);
+  useEffect(() => { setMountedForPlan(true); }, []);
   const program = useMemo<LiftingProgram | null>(() => {
+    if (!mountedForPlan) return null; // SSR + first paint: no program → no button
     try {
       const raw = localStorage.getItem(LIFTING_PROGRAM_KEY);
       return raw ? (JSON.parse(raw) as LiftingProgram) : null;
     } catch { return null; }
-  }, []);
+  }, [mountedForPlan]);
   // The program day "up next" (cursor), with this week's set count applied.
   const nextPlanDay = useMemo(() => {
     if (!program || program.days.length === 0) return null;
