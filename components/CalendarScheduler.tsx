@@ -43,10 +43,11 @@ import { alternativesFor, MUSCLE_LABEL } from '@/lib/lifting/alternatives';
 import { useUnits } from '@/lib/units';
 import { streakEndingAt } from '@/lib/streaks';
 import {
-  loadActiveTrainingBlock, blockForDate, weekInfoForDate,
+  loadActiveTrainingBlock, blockForDate, weekInfoForDate, sessionFuelKcal,
   DISCIPLINE_LABEL, INTENSITY_LABEL, PHASE_LABEL, TRAINING_BLOCK_CHANGED_EVENT,
   type TrainingBlock, type BlockSession, type Discipline,
 } from '@/lib/trainingBlock';
+import { formatPace } from '@/lib/running/vdot';
 import type { ExerciseEntry } from '@/lib/AppContext';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -885,25 +886,43 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
                 const metric = s.discipline !== 'swim' && s.distance
                   ? u.fmtDistance(s.distance)
                   : s.durationMin ? `${s.durationMin} min` : '';
+                const hasMeta = !!(s.keySession || (s.discipline === 'run' && s.paceSecPerMile) || s.fuelKcalPerHr);
                 return (
-                  <div key={s.id} className="flex items-center gap-2 rounded-md bg-[var(--bg-1)] border border-[var(--line)] px-2 py-1.5">
-                    <Icon size={14} style={{ color: DISC_COLOR[s.discipline] }} className="flex-shrink-0" />
-                    <span className="font-mono text-[8px] font-bold tracking-[0.5px] uppercase rounded px-1 py-0.5"
-                      style={{ color: 'var(--bg-0)', background: s.timeOfDay === 'am' ? '#FFB547' : '#8B7DFF' }}>
-                      {s.timeOfDay.toUpperCase()}
-                    </span>
-                    <span className="font-mono text-[11px] text-[var(--ink-1)] truncate flex-1">
-                      {DISCIPLINE_LABEL[s.discipline]} · {INTENSITY_LABEL[s.intensity]}{metric ? ` · ${metric}` : ''}
-                    </span>
-                    {done ? (
-                      <span className="flex items-center gap-1 font-mono text-[9px] font-bold uppercase tracking-[0.5px] text-[#6DFF99] flex-shrink-0">
-                        <Check size={11} /> Done
+                  <div key={s.id} className="flex flex-col gap-1 rounded-md bg-[var(--bg-1)] border border-[var(--line)] px-2 py-1.5">
+                    <div className="flex items-center gap-2">
+                      <Icon size={14} style={{ color: DISC_COLOR[s.discipline] }} className="flex-shrink-0" />
+                      <span className="font-mono text-[8px] font-bold tracking-[0.5px] uppercase rounded px-1 py-0.5"
+                        style={{ color: 'var(--bg-0)', background: s.timeOfDay === 'am' ? '#FFB547' : '#8B7DFF' }}>
+                        {s.timeOfDay.toUpperCase()}
                       </span>
-                    ) : (
-                      <button type="button" onClick={() => loadBlockSession(s)}
-                        className="flex-shrink-0 font-mono text-[9px] font-bold uppercase tracking-[1px] text-[var(--accent)] border border-[var(--accent)] rounded px-2 py-1 hover:bg-[var(--accent-12)] transition-colors">
-                        Load
-                      </button>
+                      <span className="font-mono text-[11px] text-[var(--ink-1)] truncate flex-1">
+                        {DISCIPLINE_LABEL[s.discipline]} · {INTENSITY_LABEL[s.intensity]}{metric ? ` · ${metric}` : ''}
+                      </span>
+                      {done ? (
+                        <span className="flex items-center gap-1 font-mono text-[9px] font-bold uppercase tracking-[0.5px] text-[#6DFF99] flex-shrink-0">
+                          <Check size={11} /> Done
+                        </span>
+                      ) : (
+                        <button type="button" onClick={() => loadBlockSession(s)}
+                          className="flex-shrink-0 font-mono text-[9px] font-bold uppercase tracking-[1px] text-[var(--accent)] border border-[var(--accent)] rounded px-2 py-1 hover:bg-[var(--accent-12)] transition-colors">
+                          Load
+                        </button>
+                      )}
+                    </div>
+                    {hasMeta && (
+                      <div className="flex items-center flex-wrap gap-1.5 pl-[22px]">
+                        {s.keySession && (
+                          <span className="font-mono text-[8px] font-bold tracking-[0.5px] uppercase rounded px-1 py-0.5 text-[var(--bg-0)]" style={{ background: 'var(--accent)' }}>
+                            ★ {s.keySession}
+                          </span>
+                        )}
+                        {s.discipline === 'run' && s.paceSecPerMile && (
+                          <span className="font-mono text-[9px] text-[var(--ink-3)]">@ {formatPace(s.paceSecPerMile, u.isMetric ? 'km' : 'mi')}/{u.distanceUnit}</span>
+                        )}
+                        {s.fuelKcalPerHr && (
+                          <span className="font-mono text-[9px]" style={{ color: '#FFB547' }}>🔥 Fuel {s.fuelKcalPerHr} kcal/hr · {sessionFuelKcal(s)} total</span>
+                        )}
+                      </div>
                     )}
                   </div>
                 );

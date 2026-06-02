@@ -13,12 +13,14 @@ import type { LiftingProgram } from '@/lib/lifting/program';
 import { queueSync, gatherSettings } from '@/lib/syncEngine';
 import {
   generateBlockSkeleton, loadTrainingBlock, writeTrainingBlock,
-  weekLoadIndex, trainingDayCount, isBrickDay, newSessionId,
-  PHASE_LABEL, INTENSITY_LABEL, DISCIPLINE_LABEL, TRAINING_BLOCK_CHANGED_EVENT,
-  BLOCK_WEEK_OPTIONS,
+  trainingDayCount, isBrickDay, newSessionId,
+  PHASE_LABEL, INTENSITY_LABEL, DISCIPLINE_LABEL, ZONE_LABEL, TRAINING_BLOCK_CHANGED_EVENT,
+  blockLengthOptions, ironmanReadinessNote, sessionFuelKcal,
   type TrainingBlock, type BlockGoal, type BlockWeeks, type BlockSession,
-  type Discipline, type TimeOfDay, type SessionIntensity, type DayOfWeek,
+  type Discipline, type TimeOfDay, type SessionIntensity, type DayOfWeek, type AthleteLevel,
 } from '@/lib/trainingBlock';
+import { formatPace } from '@/lib/running/vdot';
+import type { TrainingPlan } from '@/lib/running/types';
 
 const DOW_LABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -46,6 +48,23 @@ function loadLiftingProgram(): LiftingProgram | null {
     return raw ? (JSON.parse(raw) as LiftingProgram) : null;
   } catch { return null; }
 }
+
+/** VDOT-derived run paces from the saved running plan (queRunningPlan), if any —
+ *  this is the integration: block run sessions reuse the Jack Daniels engine. */
+function loadRunPaces() {
+  try {
+    const raw = localStorage.getItem('queRunningPlan');
+    if (!raw) return null;
+    const saved = JSON.parse(raw) as { plan?: TrainingPlan };
+    return saved.plan?.vdot?.paces ?? null;
+  } catch { return null; }
+}
+
+const LEVELS: Array<{ id: AthleteLevel; label: string }> = [
+  { id: 'beginner',     label: 'Beginner' },
+  { id: 'intermediate', label: 'Intermediate' },
+  { id: 'advanced',     label: 'Advanced' },
+];
 
 /** The Sunday on or before `dateStr` — block week-1 day-0 is a Sunday so the
  *  Sun..Sat session layout lands on real weekdays. */
@@ -81,9 +100,17 @@ export default function TrainingBlockBuilder() {
   const [goal, setGoal] = useState<BlockGoal>('ironman');
   const [weeks, setWeeks] = useState<BlockWeeks>(12);
   const [dpw, setDpw] = useState(6);
+  const [level, setLevel] = useState<AthleteLevel>('intermediate');
   const [startDate, setStartDate] = useState(() => sundayOnOrBefore(todayLocalStr()));
 
   const liftProgram = useMemo(() => loadLiftingProgram(), []);
+  const runPaces = useMemo(() => loadRunPaces(), []);
+  const lengthOpts = useMemo(() => blockLengthOptions(goal), [goal]);
+
+  // Keep the selected length valid for the goal (Ironman = 12/16/24 only).
+  useEffect(() => {
+    if (!lengthOpts.includes(weeks)) setWeeks(lengthOpts.includes(12) ? 12 : lengthOpts[0]);
+  }, [lengthOpts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const b = loadTrainingBlock();
@@ -112,11 +139,11 @@ export default function TrainingBlockBuilder() {
 
   const createBlock = useCallback(() => {
     const snapped = sundayOnOrBefore(startDate);
-    const b = generateBlockSkeleton(goal, weeks, dpw, snapped);
+    const b = generateBlockSkeleton(goal, weeks, dpw, snapped, undefined, { experience: level, runPaces });
     persist(b);
     setSelWeek(0);
     setCollapsed(false);
-  }, [goal, weeks, dpw, startDate, persist]);
+  }, [goal, weeks, dpw, level, runPaces, startDate, persist]);
 
   const week = block?.weeksData[selWeek];
 
@@ -146,10 +173,22 @@ export default function TrainingBlockBuilder() {
           ))}
         </div>
 
-        <Label>Length</Label>
-        <div className="flex gap-2 mb-4">
-          {BLOCK_WEEK_OPTIONS.map(w => (
+        <Label>Length{goal === 'ironman' ? ' (16–24 wk recommended)' : ''}</Label>
+        <div className="flex gap-2 mb-2">
+          {lengthOpts.map(w => (
             <Chip key={w} active={weeks === w} onClick={() => setWeeks(w)}>{w} wk</Chip>
+          ))}
+        </div>
+        {goal === 'ironman' && (
+          <p className="font-mono text-[9px] leading-relaxed text-[#FFB547] bg-[#FFB547]/10 border border-[#FFB547]/25 rounded-md px-2.5 py-2 mb-4">
+            {ironmanReadinessNote(weeks)}
+          </p>
+        )}
+
+        <Label>Experience</Label>
+        <div className="flex gap-2 mb-4">
+          {LEVELS.map(l => (
+            <Chip key={l.id} active={level === l.id} onClick={() => setLevel(l.id)}>{l.label}</Chip>
           ))}
         </div>
 
@@ -162,7 +201,13 @@ export default function TrainingBlockBuilder() {
 
         <Label>Start date (snaps to that week&apos;s Sunday)</Label>
         <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
-          className="que-input w-full mb-4 font-mono text-[12px]" />
+          className="que-input w-full mb-1.5 font-mono text-[12px]" />
+        {runPaces && (
+          <p className="font-mono text-[9px] text-[var(--ink-3)] mb-4">
+            ✓ Run paces will be pulled from your saved running plan (VDOT).
+          </p>
+        )}
+        {!runPaces && <div className="mb-4" />}
 
         <button type="button" onClick={createBlock}
           className="w-full flex items-center justify-center gap-2 rounded-lg bg-[var(--accent)] text-[var(--bg-0)] font-mono text-[12px] font-bold uppercase tracking-[1px] py-3">
@@ -206,22 +251,23 @@ export default function TrainingBlockBuilder() {
             </button>
           </div>
 
-          {/* Week strip */}
+          {/* Week strip — bar anchored to the weekly HOURS target */}
           <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1" style={{ scrollbarWidth: 'thin' }}>
             {block.weeksData.map((wk, i) => {
-              const load = weekLoadIndex(wk);
-              const maxLoad = Math.max(1, ...block.weeksData.map(weekLoadIndex));
+              const maxHours = Math.max(0.1, ...block.weeksData.map(w => w.targetHours));
+              const taper = wk.phase === 'taper';
               return (
                 <button key={wk.weekNumber} type="button" onClick={() => setSelWeek(i)}
                   className={`flex-shrink-0 w-[68px] rounded-lg border px-2 py-2 text-left transition-all ${
                     selWeek === i ? 'border-[var(--accent)] bg-[var(--accent-12)]' : 'border-[var(--line-2)]'}`}>
                   <p className="font-mono text-[9px] font-bold tracking-[0.5px] text-[var(--ink-2)]">WK {wk.weekNumber}</p>
                   <p className="font-mono text-[8px] tracking-[0.5px] uppercase mt-0.5"
-                     style={{ color: wk.isDeload ? '#FFB547' : 'var(--ink-3)' }}>
-                    {wk.isDeload ? 'Deload' : PHASE_LABEL[wk.phase]}
+                     style={{ color: taper ? '#4FC3F7' : wk.isDeload ? '#FFB547' : 'var(--ink-3)' }}>
+                    {taper ? 'Taper' : wk.isDeload ? 'Deload' : PHASE_LABEL[wk.phase]}
                   </p>
-                  <div className="h-1 mt-1.5 rounded-full bg-[var(--bg-3)] overflow-hidden">
-                    <div className="h-full rounded-full" style={{ width: `${(load / maxLoad) * 100}%`, background: 'var(--accent)' }} />
+                  <p className="font-mono text-[9px] font-bold text-[var(--ink-1)] mt-0.5">{wk.targetHours}h</p>
+                  <div className="h-1 mt-1 rounded-full bg-[var(--bg-3)] overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${(wk.targetHours / maxHours) * 100}%`, background: 'var(--accent)' }} />
                   </div>
                 </button>
               );
@@ -232,7 +278,7 @@ export default function TrainingBlockBuilder() {
           {week && (
             <div className="flex items-center justify-between mt-3 mb-2">
               <p className="font-mono text-[11px] font-bold tracking-[0.5px]">
-                Week {week.weekNumber} · {week.isDeload ? 'Deload' : PHASE_LABEL[week.phase]}
+                Week {week.weekNumber} · {week.phase === 'taper' ? 'Taper' : week.isDeload ? 'Deload' : PHASE_LABEL[week.phase]} · {week.targetHours}h
               </p>
               <div className="flex items-center gap-3">
                 <span className="font-mono text-[9px] text-[var(--ink-3)]">{trainingDayCount(week)} days</span>
@@ -270,21 +316,40 @@ export default function TrainingBlockBuilder() {
                       <div className="flex flex-col gap-1.5">
                         {day.sessions.map(s => {
                           const { Icon, color } = DISC_META[s.discipline];
+                          const hasMeta = !!(s.keySession || s.zone || (s.discipline === 'run' && s.paceSecPerMile) || s.fuelKcalPerHr);
                           return (
                             <button key={s.id} type="button"
                               onClick={() => setEditor({ weekIdx: selWeek, dow: day.dow, sessionId: s.id })}
-                              className="flex items-center gap-2 rounded-md bg-[var(--bg-1)] border border-[var(--line)] px-2 py-1.5 text-left">
-                              <Icon size={14} style={{ color }} className="flex-shrink-0" />
-                              <span className="font-mono text-[8px] font-bold tracking-[0.5px] uppercase rounded px-1 py-0.5"
-                                    style={{ color: 'var(--bg-0)', background: s.timeOfDay === 'am' ? '#FFB547' : '#8B7DFF' }}>
-                                {s.timeOfDay.toUpperCase()}
-                              </span>
-                              <span className="font-mono text-[11px] text-[var(--ink-1)] truncate flex-1">
-                                {DISCIPLINE_LABEL[s.discipline]} · {INTENSITY_LABEL[s.intensity]}
-                              </span>
-                              <span className="font-mono text-[10px] text-[var(--ink-3)] flex-shrink-0">
-                                {s.discipline !== 'swim' && s.distance ? u.fmtDistance(s.distance) : s.durationMin ? `${s.durationMin}'` : ''}
-                              </span>
+                              className="flex flex-col gap-1 rounded-md bg-[var(--bg-1)] border border-[var(--line)] px-2 py-1.5 text-left">
+                              <div className="flex items-center gap-2 w-full">
+                                <Icon size={14} style={{ color }} className="flex-shrink-0" />
+                                <span className="font-mono text-[8px] font-bold tracking-[0.5px] uppercase rounded px-1 py-0.5"
+                                      style={{ color: 'var(--bg-0)', background: s.timeOfDay === 'am' ? '#FFB547' : '#8B7DFF' }}>
+                                  {s.timeOfDay.toUpperCase()}
+                                </span>
+                                <span className="font-mono text-[11px] text-[var(--ink-1)] truncate flex-1">
+                                  {DISCIPLINE_LABEL[s.discipline]} · {INTENSITY_LABEL[s.intensity]}
+                                </span>
+                                <span className="font-mono text-[10px] text-[var(--ink-3)] flex-shrink-0">
+                                  {s.discipline !== 'swim' && s.distance ? u.fmtDistance(s.distance) : s.durationMin ? `${s.durationMin}'` : ''}
+                                </span>
+                              </div>
+                              {hasMeta && (
+                                <div className="flex items-center flex-wrap gap-1.5 pl-[22px]">
+                                  {s.keySession && (
+                                    <span className="font-mono text-[8px] font-bold tracking-[0.5px] uppercase rounded px-1 py-0.5 text-[var(--bg-0)]" style={{ background: 'var(--accent)' }}>
+                                      ★ {s.keySession}
+                                    </span>
+                                  )}
+                                  {s.zone && <span className="font-mono text-[9px] text-[var(--ink-3)]">{ZONE_LABEL[s.zone]}</span>}
+                                  {s.discipline === 'run' && s.paceSecPerMile && (
+                                    <span className="font-mono text-[9px] text-[var(--ink-3)]">@ {formatPace(s.paceSecPerMile, u.isMetric ? 'km' : 'mi')}/{u.distanceUnit}</span>
+                                  )}
+                                  {s.fuelKcalPerHr && (
+                                    <span className="font-mono text-[9px]" style={{ color: '#FFB547' }}>🔥 {s.fuelKcalPerHr} kcal/hr ({sessionFuelKcal(s)} total)</span>
+                                  )}
+                                </div>
+                              )}
                             </button>
                           );
                         })}
@@ -396,80 +461,87 @@ function SessionEditor({
   };
 
   return (
-    <motion.div className="fixed inset-0 z-50 flex items-end justify-center"
+    <motion.div className="fixed inset-0 z-[300] flex items-end md:items-center justify-center"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       onClick={onClose} style={{ background: 'rgba(0,0,0,0.6)' }}>
-      <motion.div className="w-full max-w-md rounded-t-2xl border-t border-[var(--line)] bg-[var(--bg-1)] p-4 pb-7"
+      <motion.div
+        className="w-full md:max-w-md max-h-[88dvh] flex flex-col rounded-t-2xl md:rounded-2xl border-t md:border border-[var(--line)] bg-[var(--bg-1)] overflow-hidden"
         initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={{ type: 'spring', damping: 28, stiffness: 300 }}
         onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-4">
+        {/* Header (pinned) */}
+        <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-[var(--line)] flex-shrink-0">
           <h3 className="font-display text-[16px] tracking-[1px]">{existing ? 'EDIT SESSION' : 'ADD SESSION'} · {DOW_LABEL[target.dow]}</h3>
-          <button type="button" onClick={onClose} className="text-[var(--ink-3)]"><X size={18} /></button>
+          <button type="button" onClick={onClose} className="text-[var(--ink-3)] p-1"><X size={18} /></button>
         </div>
 
-        <Label>Discipline</Label>
-        <div className="grid grid-cols-4 gap-2 mb-4">
-          {(['lift', 'run', 'bike', 'swim'] as Discipline[]).map(d => {
-            const { Icon, color } = DISC_META[d];
-            return (
-              <button key={d} type="button" onClick={() => setDiscipline(d)}
-                className={`flex flex-col items-center gap-1 rounded-lg border py-2.5 transition-all ${
-                  discipline === d ? 'border-[var(--accent)] bg-[var(--accent-12)]' : 'border-[var(--line-2)]'}`}>
-                <Icon size={18} style={{ color }} />
-                <span className="font-mono text-[9px] font-bold tracking-[0.5px]">{DISCIPLINE_LABEL[d]}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        <Label>Time of day</Label>
-        <div className="flex gap-2 mb-4">
-          {(['am', 'pm'] as TimeOfDay[]).map(t => (
-            <Chip key={t} active={timeOfDay === t} onClick={() => setTimeOfDay(t)}>{t === 'am' ? 'AM' : 'PM'}</Chip>
-          ))}
-        </div>
-
-        <Label>Intensity</Label>
-        <div className="flex flex-wrap gap-2 mb-4">
-          {intensities.map(it => (
-            <button key={it} type="button" onClick={() => setIntensity(it)}
-              className={`rounded-lg border px-3 py-1.5 font-mono text-[11px] font-bold tracking-[0.5px] transition-all ${
-                intensity === it ? 'border-[var(--accent)] bg-[var(--accent-12)] text-[var(--accent)]' : 'border-[var(--line-2)] text-[var(--ink-2)]'}`}>
-              {INTENSITY_LABEL[it]}
-            </button>
-          ))}
-        </div>
-
-        {isLift && liftDayNames.length > 0 && (
-          <>
-            <Label>Lifting-program day (loads coached sets)</Label>
-            <select value={liftDayName} onChange={e => setLiftDayName(e.target.value)}
-              className="que-input w-full mb-4 font-mono text-[12px]">
-              {liftDayNames.map(n => <option key={n} value={n}>{n}</option>)}
-            </select>
-          </>
-        )}
-
-        <div className="flex gap-3 mb-4">
-          <div className="flex-1">
-            <Label>Duration (min)</Label>
-            <input type="number" inputMode="numeric" value={durationMin} onChange={e => setDurationMin(e.target.value)}
-              className="que-input w-full font-mono text-[12px]" placeholder="e.g. 60" />
+        {/* Fields (scrollable) */}
+        <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-4">
+          <Label>Discipline</Label>
+          <div className="grid grid-cols-4 gap-2 mb-4">
+            {(['lift', 'run', 'bike', 'swim'] as Discipline[]).map(d => {
+              const { Icon, color } = DISC_META[d];
+              return (
+                <button key={d} type="button" onClick={() => setDiscipline(d)}
+                  className={`flex flex-col items-center gap-1 rounded-lg border py-2.5 transition-all ${
+                    discipline === d ? 'border-[var(--accent)] bg-[var(--accent-12)]' : 'border-[var(--line-2)]'}`}>
+                  <Icon size={18} style={{ color }} />
+                  <span className="font-mono text-[9px] font-bold tracking-[0.5px]">{DISCIPLINE_LABEL[d]}</span>
+                </button>
+              );
+            })}
           </div>
-          {!isLift && discipline !== 'swim' && (
-            <div className="flex-1">
-              <Label>Distance ({u.distanceUnit})</Label>
-              <input type="number" inputMode="decimal" value={distance} onChange={e => setDistance(e.target.value)}
-                className="que-input w-full font-mono text-[12px]" placeholder="optional" />
-            </div>
+
+          <Label>Time of day</Label>
+          <div className="flex gap-2 mb-4">
+            {(['am', 'pm'] as TimeOfDay[]).map(t => (
+              <Chip key={t} active={timeOfDay === t} onClick={() => setTimeOfDay(t)}>{t === 'am' ? 'AM' : 'PM'}</Chip>
+            ))}
+          </div>
+
+          <Label>Intensity</Label>
+          <div className="flex flex-wrap gap-2 mb-4">
+            {intensities.map(it => (
+              <button key={it} type="button" onClick={() => setIntensity(it)}
+                className={`rounded-lg border px-3 py-1.5 font-mono text-[11px] font-bold tracking-[0.5px] transition-all ${
+                  intensity === it ? 'border-[var(--accent)] bg-[var(--accent-12)] text-[var(--accent)]' : 'border-[var(--line-2)] text-[var(--ink-2)]'}`}>
+                {INTENSITY_LABEL[it]}
+              </button>
+            ))}
+          </div>
+
+          {isLift && liftDayNames.length > 0 && (
+            <>
+              <Label>Lifting-program day (loads coached sets)</Label>
+              <select value={liftDayName} onChange={e => setLiftDayName(e.target.value)}
+                className="que-input w-full mb-4 font-mono text-[12px]">
+                {liftDayNames.map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </>
           )}
+
+          <div className="flex gap-3 mb-4">
+            <div className="flex-1">
+              <Label>Duration (min)</Label>
+              <input type="number" inputMode="numeric" value={durationMin} onChange={e => setDurationMin(e.target.value)}
+                className="que-input w-full font-mono text-[12px]" placeholder="e.g. 60" />
+            </div>
+            {!isLift && discipline !== 'swim' && (
+              <div className="flex-1">
+                <Label>Distance ({u.distanceUnit})</Label>
+                <input type="number" inputMode="decimal" value={distance} onChange={e => setDistance(e.target.value)}
+                  className="que-input w-full font-mono text-[12px]" placeholder="optional" />
+              </div>
+            )}
+          </div>
+
+          <Label>Note</Label>
+          <input type="text" value={note} onChange={e => setNote(e.target.value)}
+            className="que-input w-full font-mono text-[12px]" placeholder="optional (e.g. brick off the bike)" />
         </div>
 
-        <Label>Note</Label>
-        <input type="text" value={note} onChange={e => setNote(e.target.value)}
-          className="que-input w-full mb-4 font-mono text-[12px]" placeholder="optional (e.g. brick off the bike)" />
-
-        <div className="flex gap-2">
+        {/* Actions (pinned above the nav + safe area) */}
+        <div className="flex gap-2 px-4 pt-3 border-t border-[var(--line)] flex-shrink-0"
+          style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}>
           {onDelete && (
             <button type="button" onClick={onDelete}
               className="rounded-lg border border-[var(--danger)]/40 text-[var(--danger)] px-3 py-2.5">
