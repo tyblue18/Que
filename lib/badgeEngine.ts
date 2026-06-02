@@ -15,6 +15,7 @@ import {
   ATHLETE_PLAN_KEY, MILLION_GROUPS_KEY, LIFT_PRS_KEY, MACRO_GOALS_KEY,
 } from '@/lib/constants';
 import { BADGE_CATALOG } from '@/lib/badgeCatalog';
+import { maxWorkoutStreak as restAwareWorkoutStreak, type StreakDay } from '@/lib/streaks';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -90,11 +91,12 @@ function longestStreak(days: string[]): number {
   return max;
 }
 
-/** Returns the longest consecutive workout-logged streak in localDB. */
+/** Returns the longest workout streak in localDB. Rest days the user marked
+ *  BRIDGE the streak (shared with the calendar/metrics UI via lib/streaks so
+ *  the awarded badge and the displayed streak can't drift). */
 function maxWorkoutStreak(localDB: Record<string, DayRecord>): number {
-  return longestStreak(
-    Object.keys(localDB).filter(d => String(localDB[d].exercises ?? '').length > 2).sort()
-  );
+  // DayRecord here is index-signature typed; StreakDay reads only exercises/restDay.
+  return restAwareWorkoutStreak(localDB as Record<string, StreakDay>);
 }
 
 /** Returns the longest streak where BOTH a workout was logged AND the calorie goal was hit. */

@@ -116,6 +116,10 @@ export interface DayRecord {
   foodMealOrder?: string;  // JSON-serialised string[] — ordered list of section IDs
   /** Set client-side when a lift PR and a run PR occur on the same day. */
   prBothDay?: boolean;
+  /** User intentionally marked this as a rest/recovery day. Bridges the workout
+   *  streak (a planned rest doesn't read as a missed day) without counting as a
+   *  workout. See lib/streaks.ts. A logged workout takes precedence over it. */
+  restDay?: boolean;
   /** Server-provided sync timestamp — stripped on every local edit so the server
    *  always accepts the client's dirty writes without triggering a false conflict. */
   _syncedAt?: string;

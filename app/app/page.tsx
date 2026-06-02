@@ -8,6 +8,7 @@ import { AuthHeader }    from '@/components/header';
 import CalendarScheduler from '@/components/CalendarScheduler';
 import WorkoutLogger     from '@/components/WorkoutLogger';
 import LiftingPlanBuilder from '@/components/lifting/LiftingPlanBuilder';
+import TrainingBlockBuilder from '@/components/training/TrainingBlockBuilder';
 import { Onboarding, needsOnboarding } from '@/components/Onboarding';
 import { GettingStarted } from '@/components/GettingStarted';
 import { MorningWeightPrompt } from '@/components/MorningWeightPrompt';
@@ -105,6 +106,7 @@ export default function WorkoutPage() {
         {tab === 'protocol' && (
           <ErrorBoundary label="Protocol">
             <div className="app-protocol-layout space-y-4">
+              <TrainingBlockBuilder />
               <LiftingPlanBuilder />
               <WorkoutLogger />
             </div>

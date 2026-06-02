@@ -70,6 +70,10 @@ export const GETTING_STARTED_KEY = 'queGettingStarted';
 // Structured lifting program (split + prescribed sets/reps). Synced via SETTINGS_KEYS.
 export const LIFTING_PROGRAM_KEY = 'queLiftingProgram';
 
+// Multi-week periodized training block (hybrid lift + cardio scheduler).
+// One active block at a time; synced via SETTINGS_KEYS. See lib/trainingBlock.ts.
+export const TRAINING_BLOCK_KEY = 'queTrainingBlock';
+
 // Last adaptive-TDEE estimate the user was shown in a weekly recap — used to
 // detect a meaningful week-over-week change ("updated to X") vs. a stable
 // estimate ("held steady"). Device-local; { weekId, estimate, confidence }.

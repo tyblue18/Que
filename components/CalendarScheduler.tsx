@@ -16,9 +16,14 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Bike,
+  CalendarClock,
   Dumbbell,
   Flame,
+  Footprints,
+  Moon,
   Repeat,
+  Waves,
   X,
 } from 'lucide-react';
 import { useSpotlightBorder } from '@/hooks/useSpotlightBorder';
@@ -36,6 +41,13 @@ import { buildProgramDayEntries, loadLiftPRs } from '@/lib/lifting/loadDay';
 import type { LoggedDay } from '@/lib/lifting/progression';
 import { alternativesFor, MUSCLE_LABEL } from '@/lib/lifting/alternatives';
 import { useUnits } from '@/lib/units';
+import { streakEndingAt } from '@/lib/streaks';
+import {
+  loadActiveTrainingBlock, blockForDate, weekInfoForDate,
+  DISCIPLINE_LABEL, INTENSITY_LABEL, PHASE_LABEL, TRAINING_BLOCK_CHANGED_EVENT,
+  type TrainingBlock, type BlockSession, type Discipline,
+} from '@/lib/trainingBlock';
+import type { ExerciseEntry } from '@/lib/AppContext';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -44,6 +56,7 @@ interface CellData {
   dateStr: string; dayNum: number; label: string;
   isToday: boolean; isSelected: boolean; isPadding: boolean;
   hasLift: boolean; hasCardio: boolean;
+  restDay: boolean;
   summary: string;
 }
 interface ParsedEntry {
@@ -125,8 +138,9 @@ function DayCell({
     return <div className="min-h-[56px] lg:min-h-[96px] rounded bg-transparent" />;
   }
   const hasAny  = cell.hasLift || cell.hasCardio;
-  const todayDs = toDateStr(new Date());
-  const isRest  = !hasAny && !cell.isToday && cell.dateStr < todayDs;
+  // Only an INTENTIONALLY-marked rest day reads as rest (was previously inferred
+  // for any past empty day, which made a skipped day masquerade as planned rest).
+  const isRest  = !hasAny && cell.restDay;
 
   return (
     <div
@@ -167,10 +181,10 @@ function DayCell({
         </div>
       )}
 
-      {/* Rest day indicator */}
+      {/* Rest day indicator (intentionally marked) */}
       {isRest && (
-        <span className="mt-auto font-mono text-[7px] font-bold tracking-[1.5px] uppercase text-[var(--ink-4)] select-none">
-          REST
+        <span className="mt-auto flex items-center gap-1 font-mono text-[7px] font-bold tracking-[1.5px] uppercase text-[var(--ink-3)] select-none">
+          <Moon size={9} className="text-[var(--accent)]" /> Rest
         </span>
       )}
 
@@ -242,6 +256,7 @@ function WeekCell({
             {cell.hasCardio && <span className="block w-2 h-[2px] bg-[var(--ink-1)]" />}
           </div>
         )}
+        {!hasAny && cell.restDay && <Moon size={11} className="text-[var(--accent)]" />}
       </div>
     );
   }
@@ -283,6 +298,11 @@ function WeekCell({
           {cell.hasLift   && <span className="font-mono text-[9px] font-bold tracking-[1px] text-[var(--accent-ink)] bg-[var(--accent)] px-1.5 py-0.5 rounded-sm uppercase">Lift</span>}
           {cell.hasCardio && <span className="font-mono text-[9px] font-bold tracking-[1px] text-[var(--ink-0)] bg-[var(--bg-3)] border border-[var(--line-2)] px-1.5 py-0.5 rounded-sm uppercase">Cardio</span>}
         </div>
+      )}
+      {!hasAny && cell.restDay && (
+        <span className="flex items-center gap-1 mt-auto font-mono text-[9px] font-bold tracking-[1px] uppercase text-[var(--ink-2)]">
+          <Moon size={11} className="text-[var(--accent)]" /> Rest
+        </span>
       )}
 
       {hasAny && (
@@ -335,6 +355,14 @@ function liftBadgeIcon(exerciseName: string, prWeight: number): string | null {
   return `/Badges/${highest}_${key}_badge.png`;
 }
 
+// Discipline icon + accent colour for the training-block "Planned today" card.
+const DISC_ICON: Record<Discipline, typeof Dumbbell> = {
+  lift: Dumbbell, run: Footprints, bike: Bike, swim: Waves,
+};
+const DISC_COLOR: Record<Discipline, string> = {
+  lift: 'var(--accent)', run: '#FFB547', bike: '#6DFF99', swim: '#4FC3F7',
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SUB-COMPONENT — TodaysWorkoutSummary
 // ─────────────────────────────────────────────────────────────────────────────
@@ -382,6 +410,60 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
     const idx  = ((program.cursor % days.length) + days.length) % days.length; // safe mod
     return { day: days[idx], idx };
   }, [program, todayStr]);
+
+  // ── Active training block → "Planned today" ─────────────────────────────────
+  // Read on mount (localStorage); refresh on block edits + cross-device pulls.
+  // Reading in an effect (not render) keeps SSR + first paint consistent (null →
+  // no card), so there's no hydration mismatch.
+  const [activeBlock, setActiveBlock] = useState<TrainingBlock | null>(null);
+  useEffect(() => {
+    const refresh = () => setActiveBlock(loadActiveTrainingBlock());
+    refresh();
+    window.addEventListener(TRAINING_BLOCK_CHANGED_EVENT, refresh);
+    window.addEventListener('que-settings-restored', refresh);
+    return () => {
+      window.removeEventListener(TRAINING_BLOCK_CHANGED_EVENT, refresh);
+      window.removeEventListener('que-settings-restored', refresh);
+    };
+  }, []);
+  const plannedSessions = useMemo(
+    () => (activeBlock ? blockForDate(activeBlock, dateStr) : []),
+    [activeBlock, dateStr],
+  );
+  const blockWeekInfo = useMemo(
+    () => (activeBlock ? weekInfoForDate(activeBlock, dateStr) : null),
+    [activeBlock, dateStr],
+  );
+  // Which disciplines are already logged this day (for a simple adherence tick).
+  const loggedDisciplines = new Set<Discipline>();
+  arr.forEach(e => {
+    if (e.k === 'lift' || e.k === 'text') loggedDisciplines.add('lift');
+    else if (e.k === 'run' || e.k === 'bike' || e.k === 'swim') loggedDisciplines.add(e.k);
+  });
+
+  // Load a planned session into this day's log — reuses the SAME que-load-program-day
+  // path the lifting builder uses (WorkoutLogger appends + derives cardio burn).
+  const loadBlockSession = useCallback((s: BlockSession) => {
+    if (s.discipline === 'lift') {
+      const day = program?.days.find(d => d.name === s.liftDayName);
+      const entries: ExerciseEntry[] = day
+        ? buildProgramDayEntries(day, localDB as Record<string, LoggedDay>, todayStr, loadLiftPRs(LIFT_PRS_KEY))
+        : [{ k: 'lift', n: s.note?.trim() || 'Strength', sets: [{ r: '', w: '' }, { r: '', w: '' }, { r: '', w: '' }] }];
+      window.dispatchEvent(new CustomEvent('que-load-program-day', {
+        detail: { exercises: entries, dayName: s.liftDayName ?? 'Strength' },
+      }));
+    } else {
+      const dur = s.durationMin ? String(s.durationMin) : '';
+      const dist = s.distance ? String(s.distance) : '';
+      // run/bike: v1 = distance (mi), v2 = time (min). swim: v1 = time, v2 = distance.
+      const entry: ExerciseEntry = s.discipline === 'swim'
+        ? { k: 'swim', v1: dur, v2: dist, ...(s.note ? { note: s.note } : {}) }
+        : { k: s.discipline, v1: dist, v2: dur, ...(s.note ? { note: s.note } : {}) };
+      window.dispatchEvent(new CustomEvent('que-load-program-day', {
+        detail: { exercises: [entry], dayName: DISCIPLINE_LABEL[s.discipline] },
+      }));
+    }
+  }, [program, localDB, todayStr]);
 
   // Coached top-set weight per CURRENT (possibly swapped) exercise, in lb.
   const planWeights = useMemo(() => {
@@ -646,19 +728,12 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
       .map(([g]) => g[0].toUpperCase() + g.slice(1));
   }, [localDB, dateStr, lifts]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Count consecutive logged days ending on (and including) dateStr.
-  const workoutStreakOnDate = useMemo((): number => {
-    const hasEx = (d: string) => String((localDB[d] as { exercises?: string } | undefined)?.exercises ?? '').length > 2;
-    if (!hasEx(dateStr)) return 0;
-    let streak = 1;
-    const cursor = new Date(dateStr + 'T00:00:00Z');
-    for (;;) {
-      cursor.setUTCDate(cursor.getUTCDate() - 1);
-      if (!hasEx(toDateStr(cursor))) break;
-      streak++;
-    }
-    return streak;
-  }, [localDB, dateStr]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Rest-aware workout streak ending on (and including) dateStr — a marked rest
+  // day bridges it instead of breaking it (shared with badges via lib/streaks).
+  const workoutStreakOnDate = useMemo(
+    (): number => streakEndingAt(localDB as Record<string, DayRecord>, dateStr),
+    [localDB, dateStr],
+  );
 
   // Count consecutive days ending on dateStr where BOTH workout logged AND calorie goal hit.
   const combinedStreakOnDate = useMemo((): number => {
@@ -789,12 +864,89 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
           </div>
         </div>
 
-        {isEmpty ? (
-          <div className="text-center py-10 border border-dashed border-[var(--line-2)] rounded">
-            <p className="font-mono text-[11px] tracking-[1px] text-[var(--ink-3)] uppercase">
-              {isToday ? 'No session logged · Add lifts to begin' : 'No session logged'}
-            </p>
+        {/* ── Planned today (from the active training block) ── */}
+        {plannedSessions.length > 0 && (
+          <div className="mb-4 rounded-lg border border-[var(--accent-24)] bg-[var(--accent-12)] p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5">
+                <CalendarClock size={13} className="text-[var(--accent)]" />
+                <p className="font-mono text-[10px] font-bold uppercase tracking-[1px] text-[var(--accent)]">Planned today</p>
+              </div>
+              {blockWeekInfo && (
+                <span className="font-mono text-[8px] font-bold uppercase tracking-[0.5px] text-[var(--ink-3)]">
+                  Wk {blockWeekInfo.weekNumber} · {blockWeekInfo.isDeload ? 'Deload' : PHASE_LABEL[blockWeekInfo.phase]}
+                </span>
+              )}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              {plannedSessions.map(s => {
+                const Icon = DISC_ICON[s.discipline];
+                const done = loggedDisciplines.has(s.discipline);
+                const metric = s.discipline !== 'swim' && s.distance
+                  ? u.fmtDistance(s.distance)
+                  : s.durationMin ? `${s.durationMin} min` : '';
+                return (
+                  <div key={s.id} className="flex items-center gap-2 rounded-md bg-[var(--bg-1)] border border-[var(--line)] px-2 py-1.5">
+                    <Icon size={14} style={{ color: DISC_COLOR[s.discipline] }} className="flex-shrink-0" />
+                    <span className="font-mono text-[8px] font-bold tracking-[0.5px] uppercase rounded px-1 py-0.5"
+                      style={{ color: 'var(--bg-0)', background: s.timeOfDay === 'am' ? '#FFB547' : '#8B7DFF' }}>
+                      {s.timeOfDay.toUpperCase()}
+                    </span>
+                    <span className="font-mono text-[11px] text-[var(--ink-1)] truncate flex-1">
+                      {DISCIPLINE_LABEL[s.discipline]} · {INTENSITY_LABEL[s.intensity]}{metric ? ` · ${metric}` : ''}
+                    </span>
+                    {done ? (
+                      <span className="flex items-center gap-1 font-mono text-[9px] font-bold uppercase tracking-[0.5px] text-[#6DFF99] flex-shrink-0">
+                        <Check size={11} /> Done
+                      </span>
+                    ) : (
+                      <button type="button" onClick={() => loadBlockSession(s)}
+                        className="flex-shrink-0 font-mono text-[9px] font-bold uppercase tracking-[1px] text-[var(--accent)] border border-[var(--accent)] rounded px-2 py-1 hover:bg-[var(--accent-12)] transition-colors">
+                        Load
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
+        )}
+
+        {isEmpty ? (
+          rec.restDay ? (
+            // Intentional rest day — the streak stays alive (see lib/streaks).
+            <div
+              className="flex flex-col items-center gap-2 py-9 px-4 rounded border text-center"
+              style={{ borderColor: 'var(--accent-24)', background: 'var(--accent-12)' }}
+            >
+              <Moon size={26} className="text-[var(--accent)]" />
+              <p className="font-mono text-[12px] font-bold tracking-[2px] uppercase text-[var(--accent)]">Rest Day</p>
+              <p className="font-mono text-[10px] tracking-[0.5px] text-[var(--ink-2)] max-w-[260px] leading-relaxed">
+                Recovery counts. Your workout streak stays alive through planned rest.
+              </p>
+              <button
+                type="button"
+                onClick={() => updateDayRecord(dateStr, { restDay: false })}
+                className="mt-1 font-mono text-[9px] font-bold tracking-[1px] uppercase text-[var(--ink-3)] hover:text-[var(--accent)] transition-colors"
+              >
+                Not resting? Clear
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-3 py-9 border border-dashed border-[var(--line-2)] rounded">
+              <p className="font-mono text-[11px] tracking-[1px] text-[var(--ink-3)] uppercase">
+                {isToday ? 'No session logged · Add lifts to begin' : 'No session logged'}
+              </p>
+              <button
+                type="button"
+                onClick={() => updateDayRecord(dateStr, { restDay: true })}
+                className="flex items-center gap-1.5 rounded-md border border-[var(--line-2)] px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-[1px] text-[var(--ink-2)] hover:border-[var(--accent)] hover:text-[var(--accent)] transition-all"
+                title="Mark this as a rest/recovery day — keeps your streak alive"
+              >
+                <Moon size={11} /> Mark as rest day
+              </button>
+            </div>
+          )
         ) : (
           <div className="flex flex-col gap-6">
             {Object.keys(indexedGroups).length > 0 && (
@@ -1201,10 +1353,11 @@ export default function CalendarScheduler() {
         isSelected: dateStr === activeDayFocus,
         isPadding:  false,
         hasLift, hasCardio,
+        restDay:    (rec as DayRecord).restDay === true,
         summary:    buildCellSummary(raw),
       };
     };
-    const PAD: CellData = { dateStr:'', dayNum:0, label:'', isToday:false, isSelected:false, isPadding:true, hasLift:false, hasCardio:false, summary:'' };
+    const PAD: CellData = { dateStr:'', dayNum:0, label:'', isToday:false, isSelected:false, isPadding:true, hasLift:false, hasCardio:false, restDay:false, summary:'' };
 
     if (viewMode === 'month') {
       const firstDow = new Date(year, month, 1).getDay();

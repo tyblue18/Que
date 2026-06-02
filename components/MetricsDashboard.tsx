@@ -17,6 +17,7 @@ import {
 import { ActivityIcon } from '@/components/ActivityIcon';
 import { useSpotlightBorder } from '@/hooks/useSpotlightBorder';
 import { LIFT_PRS_KEY } from '@/lib/constants';
+import { streakEndingAt, type StreakDay } from '@/lib/streaks';
 import Lottie from 'lottie-react';
 import prData from '@/public/PR_animation.json';
 import {
@@ -1550,15 +1551,17 @@ export default function MetricsDashboard({ openProfileSignal = 0 }: { openProfil
 
     const s = countStreak(ds => logged.has(ds));
 
-    const liftDays = new Set(
-      Object.keys(localDB).filter(ds => {
-        const r = localDB[ds];
-        if (!r.exercises) return false;
-        try { return (JSON.parse(String(r.exercises)) as Array<{ k?: string }>).some(e => e.k === 'lift'); }
-        catch { return false; }
-      })
-    );
-    const ws = countStreak(ds => liftDays.has(ds));
+    // Rest-aware lift streak: a marked rest day bridges it (shared lib/streaks,
+    // lift-only predicate so cardio-only days don't count here). Today-grace: if
+    // today isn't yet a lift/rest day, measure the streak ending yesterday.
+    const isLiftDay = (r: StreakDay | undefined | null): boolean => {
+      if (!r?.exercises) return false;
+      try { return (JSON.parse(String(r.exercises)) as Array<{ k?: string }>).some(e => e.k === 'lift'); }
+      catch { return false; }
+    };
+    const yesterdayStr = toDateStr(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1));
+    const ws = streakEndingAt(localDB as Record<string, StreakDay>, todayStr, isLiftDay)
+            || streakEndingAt(localDB as Record<string, StreakDay>, yesterdayStr, isLiftDay);
 
     const weighDays = new Set(Object.keys(localDB).filter(ds => parseFloat(String(localDB[ds]?.weight ?? '0')) > 0));
     const wis = countStreak(ds => weighDays.has(ds));

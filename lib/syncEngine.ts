@@ -38,7 +38,7 @@ import {
   CUSTOM_EXERCISES_KEY,
   LAST_STREAK_KEY, LIFT_PRS_KEY, MILLION_GROUPS_KEY, MACRO_GOALS_KEY,
   COIN_KEY, PROFILE_PHOTO_KEY, UNITS_KEY, DB_KEY, PENDING_BADGE_POPUPS_KEY,
-  LIFTING_PROGRAM_KEY,
+  LIFTING_PROGRAM_KEY, TRAINING_BLOCK_KEY,
 } from '@/lib/constants';
 import { trackEvent } from '@/lib/telemetry';
 
@@ -82,6 +82,7 @@ const SETTINGS_KEYS = [
   PROFILE_PHOTO_KEY,       // profile photo URL (Vercel Blob) or base64 fallback
   UNITS_KEY,               // imperial/metric display preference — synced across devices
   LIFTING_PROGRAM_KEY,     // structured lifting program (split + prescribed sets/reps)
+  TRAINING_BLOCK_KEY,      // multi-week periodized training block (hybrid scheduler)
 ] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
