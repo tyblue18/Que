@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion, useDragControls } from 'framer-motion';
-import { Plus, X, Trash2, Pencil } from 'lucide-react';
+import { Plus, X, Trash2, Pencil, Flame } from 'lucide-react';
 import Lottie from 'lottie-react';
 import coinAnim      from '@/public/Calorie_Coin_animation.json';
 import celebrateAnim from '@/public/Celebrate_animation.json';
@@ -20,6 +20,7 @@ import {
   FIXED_MEALS, MEAL_LABELS, DEFAULT_ORDER, getMealLabel,
 } from '@/components/calorie/AddFoodModal';
 import { useBudgetMetrics, type CardioFields, parseNum, fmtDateLong, loadPlan } from '@/lib/metricsTypes';
+import { useUnits } from '@/lib/units';
 import { useSpotlightBorder } from '@/hooks/useSpotlightBorder';
 import { CelebrationModal, ProjectionModal } from '@/components/metrics/MetricsModals';
 
@@ -468,6 +469,7 @@ export default function CalorieTracker() {
   }), [activeRec.steps, activeRec.runDist, activeRec.runTime, activeRec.bikeDist, activeRec.bikeTime, activeRec.swimTime]);
 
   const liveMetrics = useBudgetMetrics(profile, todayCardio);
+  const u = useUnits();
   const budget      = liveMetrics.budget || baseBudget;
   const proteinTarget = Math.round(parseFloat(profile.weight) * 0.8) || 0;
 
@@ -873,6 +875,39 @@ export default function CalorieTracker() {
               })()}
             </div>
           </div>
+
+          {/* ── Training credit — makes the eat-back VISIBLE. This is Que's whole
+               point: your food budget knows your training. Only renders on days
+               with logged cardio (eatBack > 0; steps don't count toward it). The
+               run/bike/swim burns + the day's distances all come from liveMetrics,
+               which is keyed to the day being viewed, so the copy always matches. ── */}
+          {liveMetrics.eatBack > 0 && (() => {
+            const runDist  = parseNum(String(activeRec.runDist  ?? 0));
+            const bikeDist = parseNum(String(activeRec.bikeDist ?? 0));
+            const swimMin  = parseNum(String(activeRec.swimTime ?? 0));
+            const parts: string[] = [];
+            if (liveMetrics.runBurn  > 0) parts.push(runDist  > 0 ? `ran ${u.fmtDistance(runDist)}`  : 'ran');
+            if (liveMetrics.bikeBurn > 0) parts.push(bikeDist > 0 ? `biked ${u.fmtDistance(bikeDist)}` : 'biked');
+            if (liveMetrics.swimBurn > 0) parts.push(swimMin  > 0 ? `swam ${Math.round(swimMin)} min` : 'swam');
+            const did  = parts.length ? parts.join(' · ') : 'trained';
+            const when = activeDayFocus === todayStr ? 'today' : 'that day';
+            return (
+              <div
+                className="mb-4 flex items-start gap-2.5 rounded-lg border px-3 py-2.5"
+                style={{ borderColor: 'var(--accent-24)', background: 'var(--accent-12)' }}
+              >
+                <Flame size={15} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--accent)' }} aria-hidden="true" />
+                <div className="min-w-0">
+                  <p className="font-mono text-[12px] font-bold tracking-[0.3px]" style={{ color: 'var(--accent)' }}>
+                    +{liveMetrics.eatBack} kcal added because you {did} {when}
+                  </p>
+                  <p className="font-mono text-[9px] text-[var(--ink-3)] tracking-[0.3px] mt-0.5">
+                    Your training burned {liveMetrics.activityBurn} kcal — Que adds 60% of that back to your budget.
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Calorie progress bar */}
           {budget > 0 && (
