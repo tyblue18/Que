@@ -3,33 +3,46 @@
  *
  * Multi-week PERIODIZED training-block engine — the hybrid/concurrent-training
  * scheduler that sits ON TOP of the single-discipline lifting (lib/lifting) and
- * running (lib/running) engines. A block spans 4 / 6 / 8 / 10 / 12 weeks and
- * schedules lifts AND cardio together, including two-a-days (AM/PM), for an
- * athlete training for something like an Ironman.
+ * running (lib/running) engines. It schedules lifts AND cardio together,
+ * including two-a-days (AM/PM), for an athlete training for something like an
+ * Ironman.
  *
  * Pure (no React, no storage) so it can be unit-tested in isolation. The UI
  * (components/training/TrainingBlockBuilder.tsx) and the calendar read from it;
  * logging still lands in DayRecord (plan vs. actual stay separate).
  *
- * ── Periodization methodology (concurrent / hybrid training) ─────────────────
- *  • MACROCYCLE: base → build → peak → taper, with 3:1 LOADING (every 4th week
- *    is a deload at reduced volume). [evidence] Block/undulating periodization +
- *    planned deloads are standard for managing concurrent fatigue.
- *  • INTERFERENCE EFFECT [evidence]: endurance and strength adaptations compete
- *    (AMPK vs mTOR). Mitigations baked into the templates:
- *      – two daily sessions are split AM/PM (≥6h apart);
- *      – heavy lower-body lifting is kept OFF the key long-ride / long-run days;
- *      – intensity is POLARIZED (~80% easy, ~20% hard) — hard days aren't stacked;
- *      – exactly ONE full rest day per week.
- *  • IRONMAN specifics [estimate]: weekly long ride, long run, a BRICK (bike→run
- *    same day), 2–3 swims, and strength 2×/week as low-volume maintenance that
- *    tapers toward race week.
- *  • Durations here are sensible STARTING estimates [heuristic]; advanced users
- *    edit every session in the builder. The engine's job is a correct, safe
- *    skeleton, not a prescription the user can't override.
+ * ── Periodization methodology (concurrent / hybrid endurance) ────────────────
+ *  • MACROCYCLE: base → build → peak → taper, 3:1 LOADING (every 4th week is a
+ *    recovery deload). [evidence] Block periodization + planned deloads manage
+ *    concurrent fatigue.
+ *  • WEEKLY VOLUME IN HOURS, progressing ≤10%/week. [evidence] The ~10% rule is
+ *    the standard ceiling on weekly endurance-load increase; recovery/taper weeks
+ *    cut volume. The per-user peak-hours number is an [estimate] scaled by the
+ *    days/week and experience inputs (intermediate peak ≈ 12–17h [evidence range]).
+ *  • POLARIZED ~80/20 [evidence]: ~80% of weekly endurance volume is easy/aerobic
+ *    (Z1/Z2). Long endurance sessions are Z2 BY DEFINITION (Ironman race intensity
+ *    ≈ LT1/Zone 2) — race-specific because aerobic, not "downgraded".
+ *  • LONG RUN CAP ~2.75h [evidence]: training-marathon-length runs cost more
+ *    recovery than they build. Long RIDE builds toward 5–6h [evidence] (the bike
+ *    is the longest Ironman discipline and tolerates the volume).
+ *  • 2–3 WEEK TAPER [evidence]: final weeks drop volume to ~75/50/(25)% while
+ *    MAINTAINING intensity (cutting intensity loses fitness). Peak load lands
+ *    3–4 weeks out.
+ *  • RECOVERY BUFFER [evidence]: a long session's recovery cost is 36–48h, so the
+ *    day AFTER a key long session is forced easy/recovery (no hard/long cardio).
+ *  • INTERFERENCE EFFECT [evidence] (AMPK vs mTOR): two daily sessions split
+ *    AM/PM (≥6h); heavy lower-body lifting kept OFF the key long days.
+ *  • IRONMAN block length is honest: full builds are 24–52 weeks [evidence]; a
+ *    12-week Ironman block is valid only as a PEAK phase for an athlete who
+ *    already has a base (see ironmanReadinessNote). Recommended: 16 / 24 weeks.
+ *  • FUELLING REHEARSAL [evidence]: long aerobic sessions carry a ~400 kcal/hr
+ *    target (≈60–90 g carbs/hr) — ties into Que's calorie/eat-back system.
+ *
+ * Numbers are tagged [evidence] / [estimate] / [heuristic]; every session is
+ * user-editable in the builder. The engine's job is a correct, safe skeleton.
  */
 
-import type { TrainingPhase } from '@/lib/running/types';
+import type { TrainingPhase, TrainingPaces } from '@/lib/running/types';
 import { TRAINING_BLOCK_KEY } from '@/lib/constants';
 
 export type Discipline = 'lift' | 'run' | 'bike' | 'swim';
@@ -37,19 +50,26 @@ export type TimeOfDay = 'am' | 'pm';
 export type SessionIntensity =
   | 'recovery' | 'easy' | 'tempo' | 'threshold' | 'interval' | 'long' // cardio
   | 'strength' | 'hypertrophy';                                       // lift
+/** Physiological zone for 80/20 polarization accounting (cardio only). */
+export type IntensityZone = 'easy' | 'threshold' | 'hard';
 
 export type BlockGoal = 'ironman' | 'hybrid' | 'custom';
-export type BlockWeeks = 4 | 6 | 8 | 10 | 12;
+export type BlockWeeks = 4 | 6 | 8 | 10 | 12 | 16 | 24;
 export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6; // 0 = Sun … 6 = Sat
+export type AthleteLevel = 'beginner' | 'intermediate' | 'advanced';
 
 export interface BlockSession {
   id: string;
   discipline: Discipline;
   timeOfDay: TimeOfDay;
   intensity: SessionIntensity;
-  durationMin?: number;   // planned minutes (cardio or lift)
-  distance?: number;      // canonical MILES (cardio only; display via useUnits)
-  liftDayName?: string;   // ties a lift session to a LiftingProgram day name
+  zone?: IntensityZone;       // cardio physiological zone (drives 80/20)
+  durationMin?: number;       // planned minutes (cardio or lift)
+  distance?: number;          // canonical MILES (cardio only; display via useUnits)
+  paceSecPerMile?: number;    // run target pace from VDOT (when available)
+  fuelKcalPerHr?: number;     // fuelling-rehearsal target (long aerobic sessions)
+  keySession?: string;        // named race-specific session (peak phase)
+  liftDayName?: string;       // ties a lift session to a LiftingProgram day name
   note?: string;
 }
 
@@ -62,6 +82,7 @@ export interface BlockWeek {
   weekNumber: number;       // 1-based
   phase: TrainingPhase;
   isDeload: boolean;
+  targetHours: number;      // planned weekly endurance volume (hours) — the anchor
   days: BlockDay[];         // always length 7, dow 0..6
 }
 
@@ -76,13 +97,32 @@ export interface TrainingBlock {
   active: boolean;          // only an active block feeds the calendar
 }
 
+/** Length options by goal. Ironman is its OWN set: 24–52wk is a full build, so
+ *  the Ironman goal only offers 12 (peak block, base assumed) / 16 / 24 — it
+ *  can't silently produce a sub-12-week "race-ready" plan. Other goals keep the
+ *  general short blocks. */
 export const BLOCK_WEEK_OPTIONS: BlockWeeks[] = [4, 6, 8, 10, 12];
+export const IRONMAN_WEEK_OPTIONS: BlockWeeks[] = [12, 16, 24];
+export function blockLengthOptions(goal: BlockGoal): BlockWeeks[] {
+  return goal === 'ironman' ? IRONMAN_WEEK_OPTIONS : BLOCK_WEEK_OPTIONS;
+}
+
+/** Honest readiness framing for an Ironman block — surfaced in the UI. [evidence]
+ *  A full Ironman build is 24–52 weeks; shorter blocks assume an existing base. */
+export function ironmanReadinessNote(weeks: BlockWeeks): string {
+  if (weeks <= 12) {
+    return 'Peak/Build block — assumes you can already swim ~2.8k, ride ~3.5h, and run ~1.5h continuously. Not a full beginner Ironman build.';
+  }
+  if (weeks <= 16) {
+    return 'Recommended build — assumes a basic aerobic base (already training ~6–8h/week). A full from-scratch Ironman build is 24+ weeks.';
+  }
+  return 'Full build — suitable from a modest aerobic base. The genuinely-recommended length for an Ironman.';
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PHASE LAYOUT — phase + deload per week, per supported block length.
-// Explicit tables (only 5 lengths) so the periodization is predictable & testable.
-// Short blocks (4/6) are too short for a mid-block deload, so they just load then
-// taper; 8/10/12 deload every 4th week and always taper the final week.
+// Existing 4/6/8/10/12 are UNCHANGED (other goals + Ironman 12 = peak block).
+// Ironman-recommended 16/24 add a proper 2–3 week taper; deloads every 4th week.
 // ─────────────────────────────────────────────────────────────────────────────
 type PhaseSpec = { phase: TrainingPhase; isDeload: boolean };
 const L = (phase: TrainingPhase, isDeload = false): PhaseSpec => ({ phase, isDeload });
@@ -98,6 +138,19 @@ const PHASE_LAYOUTS: Record<BlockWeeks, PhaseSpec[]> = {
   12: [L('base'), L('base'), L('base'), L('base', true),
        L('build1'), L('build1'), L('build2'), L('build2', true),
        L('peak'), L('peak'), L('peak'), L('taper', true)],
+  // 16-week: 2-week taper; peak load lands ~2 weeks out.
+  16: [L('base'), L('base'), L('base'), L('base', true),
+       L('build1'), L('build1'), L('build2'), L('build2', true),
+       L('build2'), L('peak'), L('peak'), L('peak', true),
+       L('peak'), L('peak'), L('taper', true), L('taper', true)],
+  // 24-week: 3-week taper; peak load lands ~3 weeks out.
+  24: [L('base'), L('base'), L('base'), L('base', true),
+       L('base'), L('base'), L('base'), L('base', true),
+       L('build1'), L('build1'), L('build2'), L('build2', true),
+       L('build1'), L('build1'), L('build2'), L('build2', true),
+       L('peak'), L('peak'), L('peak'), L('peak', true),
+       L('peak'),
+       L('taper', true), L('taper', true), L('taper', true)],
 };
 
 export function phaseLayout(weeks: BlockWeeks): PhaseSpec[] {
@@ -105,15 +158,16 @@ export function phaseLayout(weeks: BlockWeeks): PhaseSpec[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WEEKLY TEMPLATES — a 7-day skeleton per goal. Each slot has a PRIORITY so a
-// lower days/week setting drops the least-important training days (→ rest). The
-// `intensity` here is the LOAD-week role; applyPhase() modulates it per phase.
-// dow: 0=Sun 1=Mon 2=Tue 3=Wed 4=Thu 5=Fri 6=Sat
+// WEEKLY TEMPLATES — a 7-day skeleton per goal. Each slot has a PRIORITY (so a
+// lower days/week setting drops the least-important training days → rest) and an
+// optional baseMin (its load-week-1 baseline minutes, scaled to the weekly-hours
+// target). dow: 0=Sun 1=Mon 2=Tue 3=Wed 4=Thu 5=Fri 6=Sat
 // ─────────────────────────────────────────────────────────────────────────────
 interface SlotDef {
   discipline: Discipline;
   timeOfDay: TimeOfDay;
   intensity: SessionIntensity;
+  baseMin?: number;
 }
 interface DayDef {
   dow: DayOfWeek;
@@ -122,27 +176,28 @@ interface DayDef {
   slots: SlotDef[];
 }
 
-// Ironman: 2 swims, 3 bikes (1 long), 3 runs (1 long + brick), 2 lifts, 1 rest.
-// Heavy lifts (Mon/Fri PM) deliberately off the long days (Sat long ride, Sun long run).
+// Ironman week. Two big days (Tue long run, Sat long ride + race-pace brick) with
+// a recovery day AFTER each (Wed after Tue; next-week Sun after Sat). 2 swims,
+// 3 bikes, 3 runs, 2 maintenance lifts, 1 rest. Heavy lifts off the long days.
 const IRONMAN_WEEK: DayDef[] = [
-  { dow: 0, priority: 9, isLongDay: true,  slots: [{ discipline: 'run',  timeOfDay: 'am', intensity: 'long' }] },
-  { dow: 1, priority: 6, slots: [{ discipline: 'swim', timeOfDay: 'am', intensity: 'easy' },   { discipline: 'lift', timeOfDay: 'pm', intensity: 'strength' }] },
-  { dow: 2, priority: 7, slots: [{ discipline: 'bike', timeOfDay: 'am', intensity: 'threshold' }] },
-  { dow: 3, priority: 0, slots: [] }, // REST
-  { dow: 4, priority: 5, slots: [{ discipline: 'run',  timeOfDay: 'am', intensity: 'interval' }, { discipline: 'swim', timeOfDay: 'pm', intensity: 'easy' }] },
-  { dow: 5, priority: 4, slots: [{ discipline: 'bike', timeOfDay: 'am', intensity: 'easy' },     { discipline: 'lift', timeOfDay: 'pm', intensity: 'strength' }] },
-  { dow: 6, priority: 10, isLongDay: true, slots: [{ discipline: 'bike', timeOfDay: 'am', intensity: 'long' }, { discipline: 'run', timeOfDay: 'pm', intensity: 'easy' }] }, // BRICK
+  { dow: 0, priority: 5, slots: [{ discipline: 'run', timeOfDay: 'am', intensity: 'easy', baseMin: 40 }] }, // recovery run (after Sat long ride)
+  { dow: 1, priority: 7, slots: [{ discipline: 'swim', timeOfDay: 'am', intensity: 'easy', baseMin: 35 }, { discipline: 'lift', timeOfDay: 'pm', intensity: 'strength' }] },
+  { dow: 2, priority: 9, isLongDay: true, slots: [{ discipline: 'run', timeOfDay: 'am', intensity: 'long', baseMin: 90 }] }, // LONG RUN
+  { dow: 3, priority: 4, slots: [{ discipline: 'bike', timeOfDay: 'am', intensity: 'easy', baseMin: 50 }, { discipline: 'lift', timeOfDay: 'pm', intensity: 'strength' }] }, // recovery spin (after long run) + maintenance lift
+  { dow: 4, priority: 6, slots: [{ discipline: 'bike', timeOfDay: 'am', intensity: 'threshold', baseMin: 55 }, { discipline: 'swim', timeOfDay: 'pm', intensity: 'easy', baseMin: 35 }] },
+  { dow: 5, priority: 0, slots: [] }, // REST
+  { dow: 6, priority: 10, isLongDay: true, slots: [{ discipline: 'bike', timeOfDay: 'am', intensity: 'long', baseMin: 200 }, { discipline: 'run', timeOfDay: 'pm', intensity: 'tempo', baseMin: 30 }] }, // BIG DAY: long ride + race-pace brick
 ];
 
 // Hybrid: balanced lifting + endurance, one long run, mostly single sessions.
 const HYBRID_WEEK: DayDef[] = [
-  { dow: 0, priority: 8, isLongDay: true, slots: [{ discipline: 'run',  timeOfDay: 'am', intensity: 'long' }] },
+  { dow: 0, priority: 8, isLongDay: true, slots: [{ discipline: 'run',  timeOfDay: 'am', intensity: 'long', baseMin: 80 }] },
   { dow: 1, priority: 9, slots: [{ discipline: 'lift', timeOfDay: 'am', intensity: 'strength' }] },
-  { dow: 2, priority: 6, slots: [{ discipline: 'run',  timeOfDay: 'am', intensity: 'easy' }] },
+  { dow: 2, priority: 6, slots: [{ discipline: 'run',  timeOfDay: 'am', intensity: 'easy', baseMin: 45 }] },
   { dow: 3, priority: 7, slots: [{ discipline: 'lift', timeOfDay: 'am', intensity: 'hypertrophy' }] },
-  { dow: 4, priority: 5, slots: [{ discipline: 'bike', timeOfDay: 'am', intensity: 'threshold' }] },
+  { dow: 4, priority: 5, slots: [{ discipline: 'bike', timeOfDay: 'am', intensity: 'threshold', baseMin: 50 }] },
   { dow: 5, priority: 0, slots: [] }, // REST
-  { dow: 6, priority: 4, slots: [{ discipline: 'lift', timeOfDay: 'am', intensity: 'strength' }, { discipline: 'bike', timeOfDay: 'pm', intensity: 'easy' }] },
+  { dow: 6, priority: 4, slots: [{ discipline: 'lift', timeOfDay: 'am', intensity: 'strength' }, { discipline: 'bike', timeOfDay: 'pm', intensity: 'easy', baseMin: 60 }] },
 ];
 
 function templateWeek(goal: BlockGoal): DayDef[] {
@@ -152,74 +207,127 @@ function templateWeek(goal: BlockGoal): DayDef[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DURATIONS — starting estimates (minutes). Long sessions grow across the block;
-// quality is trimmed on deload/taper. All user-editable afterward. [heuristic]
+// VOLUME / INTENSITY CONSTANTS  ([evidence]/[estimate]/[heuristic] tagged)
 // ─────────────────────────────────────────────────────────────────────────────
-const BASE_MIN: Record<SessionIntensity, number> = {
-  recovery: 30, easy: 50, tempo: 50, threshold: 45, interval: 45, long: 90,
+const LONG_RUN_CAP_MIN = 165;   // ~2.75h [evidence] — never a training-marathon
+const LONG_RIDE_CAP_MIN = 360;  // 6h ceiling [evidence]
+const FUEL_KCAL_PER_HR = 400;   // ~60–90 g carbs/hr [evidence]
+const EASY_ZONE_TARGET = 0.80;  // ~80/20 polarization [evidence]
+
+// Default load-week baseline minutes when a slot omits baseMin. [heuristic]
+const DEFAULT_BASE_MIN: Record<SessionIntensity, number> = {
+  recovery: 30, easy: 45, tempo: 45, threshold: 45, interval: 40, long: 90,
   strength: 45, hypertrophy: 50,
 };
+const LIFT_MIN_LOAD = 45;    // [heuristic]
+const LIFT_MIN_DELOAD = 35;
 
-// Rough mph for converting a cardio long duration → a distance estimate (miles).
+// Rough mph for converting a cardio duration → distance estimate (miles). [estimate]
 const SPEED_MPH: Partial<Record<Discipline, number>> = { run: 6, bike: 16 };
 
-/** Phase/deload modulation of a single slot → a concrete session. `progress` is
- *  0..1 across the whole block (drives how long the "long" sessions get). */
-function applyPhase(
-  slot: SlotDef,
-  phase: TrainingPhase,
-  isDeload: boolean,
-  progress: number,
-  idKey: string,
-): BlockSession {
-  let intensity = slot.intensity;
+const round1 = (x: number) => Math.round(x * 10) / 10;
 
-  // Base phase builds the aerobic engine: downgrade hard cardio to easy/tempo.
-  if (phase === 'base' && (intensity === 'interval' || intensity === 'threshold')) {
-    intensity = 'tempo';
-  }
-  // Deload & taper: pull cardio quality back to easy and lifts to lighter work.
-  if (isDeload) {
-    if (intensity === 'interval' || intensity === 'threshold' || intensity === 'tempo') intensity = 'easy';
-  }
+/** Peak weekly endurance hours, scaled by days/week + experience. Intermediate
+ *  peak ≈ 14h (mid of the 12–17h [evidence] range); [estimate] factors below. */
+function goalPeakHours(goal: BlockGoal, daysPerWeek: number, level: AthleteLevel): number {
+  const basePeak = goal === 'ironman' ? 14 : goal === 'hybrid' ? 7 : 8; // [estimate]
+  const dayFactor = ({ 3: 0.6, 4: 0.75, 5: 0.88, 6: 1.0 } as Record<number, number>)[
+    Math.max(3, Math.min(6, Math.round(daysPerWeek)))
+  ] ?? 1.0; // [estimate]
+  const expFactor = ({ beginner: 0.8, intermediate: 1.0, advanced: 1.15 } as Record<AthleteLevel, number>)[level]; // [estimate]
+  return Math.max(6, Math.min(20, basePeak * dayFactor * expFactor));
+}
 
-  let durationMin = BASE_MIN[intensity];
-  // Long sessions grow ~ up to +60% by peak.
-  if (slot.intensity === 'long') durationMin = Math.round(BASE_MIN.long * (1 + 0.6 * progress));
-  // Deload/taper cut total time.
-  if (isDeload) durationMin = Math.round(durationMin * (phase === 'taper' ? 0.5 : 0.6));
-
-  const session: BlockSession = {
-    id: idKey,
-    discipline: slot.discipline,
-    timeOfDay: slot.timeOfDay,
-    intensity,
-    durationMin,
+/** Per-week target endurance HOURS following the ≤10% rule. Load weeks rise ≤9%
+ *  from the previous load week (capped at a per-phase ceiling); recovery deloads
+ *  drop to 60%; taper weeks descend (~75/50/25% of peak) — volume only, intensity
+ *  is preserved in applyIntensity(). */
+function weeklyHoursPlan(layout: PhaseSpec[], peakHours: number): number[] {
+  const n = layout.length;
+  let taperN = 0;
+  for (let i = n - 1; i >= 0 && layout[i].phase === 'taper'; i--) taperN++;
+  const CEIL: Record<TrainingPhase, number> = { base: 0.78, build1: 0.88, build2: 0.95, peak: 1.0, taper: 1.0 };
+  const taperFrac = (seen: number, total: number): number => {
+    const table: Record<number, number[]> = { 1: [0.5], 2: [0.6, 0.4], 3: [0.7, 0.5, 0.3] };
+    return (table[total] ?? [0.5])[seen] ?? 0.4;
   };
-  // Cardio distance estimate (miles) for run/bike; swim stays time-only.
-  const mph = SPEED_MPH[slot.discipline];
-  if (mph) session.distance = Math.round((durationMin / 60) * mph * 10) / 10;
-  return session;
+  const out: number[] = new Array(n);
+  let lastLoad: number | null = null;
+  let taperSeen = 0;
+  for (let i = 0; i < n; i++) {
+    const s = layout[i];
+    if (s.phase === 'taper') {
+      out[i] = round1(peakHours * taperFrac(taperSeen, taperN));
+      taperSeen++;
+    } else if (s.isDeload) {
+      out[i] = round1((lastLoad ?? peakHours * 0.6) * 0.6);
+    } else {
+      const ceil = CEIL[s.phase] * peakHours;
+      const next = lastLoad == null ? peakHours * 0.6 : Math.min(lastLoad * 1.09, ceil);
+      out[i] = round1(Math.max(next, lastLoad ?? 0));
+      lastLoad = out[i];
+    }
+  }
+  return out;
+}
+
+/** Maps a session intensity → physiological zone (cardio only). */
+export function zoneFor(intensity: SessionIntensity): IntensityZone | undefined {
+  switch (intensity) {
+    case 'recovery': case 'easy': case 'long': return 'easy';
+    case 'tempo': case 'threshold': return 'threshold';
+    case 'interval': return 'hard';
+    default: return undefined; // strength / hypertrophy → no cardio zone
+  }
+}
+
+/** Phase/deload modulation of INTENSITY (not volume). Base downgrades hard cardio
+ *  to build the aerobic engine; a RECOVERY deload downgrades quality to easy; a
+ *  TAPER week PRESERVES intensity (its volume is cut via the hours plan). */
+function applyIntensity(intensity: SessionIntensity, phase: TrainingPhase, isDeload: boolean): SessionIntensity {
+  let r = intensity;
+  if (phase === 'base' && (r === 'interval' || r === 'threshold')) r = 'tempo';
+  if (isDeload && phase !== 'taper' && (r === 'interval' || r === 'threshold' || r === 'tempo')) r = 'easy';
+  return r;
+}
+
+/** Run target pace (sec/mile) for an intensity, from VDOT-derived paces. */
+function paceForRun(intensity: SessionIntensity, paces: TrainingPaces): number | undefined {
+  switch (intensity) {
+    case 'recovery': case 'easy': case 'long': return paces.easyHigh;
+    case 'tempo': return paces.marathon;
+    case 'threshold': return paces.threshold;
+    case 'interval': return paces.interval;
+    default: return undefined;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SKELETON GENERATION
 // ─────────────────────────────────────────────────────────────────────────────
 
+export interface BlockGenOptions {
+  experience?: AthleteLevel;
+  runPaces?: TrainingPaces | null;
+}
+
 /** Build a full periodized block. daysPerWeek (clamped 3..6) selects how many of
- *  the template's training days survive (lowest-priority days become rest), so
- *  there is always ≥1 rest day. A 'custom'/blank goal yields empty (phased) weeks. */
+ *  the template's training days survive. Session durations are scaled to a weekly
+ *  HOURS target that progresses ≤10%/week; long run is capped, long ride builds
+ *  to 5–6h; taper holds intensity; the day after a long session is forced easy. */
 export function generateBlockSkeleton(
   goal: BlockGoal,
   weeks: BlockWeeks,
   daysPerWeek: number,
   startDate: string,
   name?: string,
+  opts?: BlockGenOptions,
 ): TrainingBlock {
   const layout = phaseLayout(weeks);
   const tmpl = templateWeek(goal);
+  const level = opts?.experience ?? 'intermediate';
+  const runPaces = opts?.runPaces ?? null;
 
-  // Which dows are training days? Keep the top-`daysPerWeek` by priority.
   const days = Math.max(3, Math.min(6, Math.round(daysPerWeek)));
   const trainingDows = new Set(
     tmpl.filter(d => d.slots.length > 0)
@@ -228,23 +336,86 @@ export function generateBlockSkeleton(
       .map(d => d.dow),
   );
 
+  const peakHours = goalPeakHours(goal, days, level);
+  const hoursCurve = weeklyHoursPlan(layout, peakHours);
+
   const weeksData: BlockWeek[] = layout.map((spec, wi) => {
     const weekNumber = wi + 1;
-    const progress = weeks > 1 ? wi / (weeks - 1) : 0;
+    const targetHours = hoursCurve[wi];
 
+    // 1) Build each day's sessions with intensity/zone/flags + a working baseMin.
+    type Working = { session: BlockSession; baseMin: number; isLong: boolean };
     const dayList: BlockDay[] = ([0, 1, 2, 3, 4, 5, 6] as DayOfWeek[]).map(dow => {
       const def = tmpl.find(d => d.dow === dow);
       if (!def || def.slots.length === 0 || !trainingDows.has(dow)) {
         return { dow, sessions: [] };
       }
-      const sessions = def.slots.map((slot, si) =>
-        applyPhase(slot, spec.phase, spec.isDeload, progress, `w${weekNumber}-d${dow}-s${si}`),
-      );
-      return { dow, sessions };
+      const working: Working[] = def.slots.map((slot, si) => {
+        const intensity = applyIntensity(slot.intensity, spec.phase, spec.isDeload);
+        const isLong = slot.intensity === 'long';
+        const session: BlockSession = {
+          id: `w${weekNumber}-d${dow}-s${si}`,
+          discipline: slot.discipline,
+          timeOfDay: slot.timeOfDay,
+          intensity,
+          zone: zoneFor(intensity),
+        };
+        if (slot.discipline === 'lift') {
+          session.durationMin = spec.isDeload ? LIFT_MIN_DELOAD : LIFT_MIN_LOAD;
+        }
+        if (isLong) session.fuelKcalPerHr = FUEL_KCAL_PER_HR; // fuelling rehearsal
+        // Race-specific named sessions only in the peak phase.
+        if (spec.phase === 'peak') {
+          if (isLong) session.keySession = slot.discipline === 'bike' ? 'Race-sim ride' : 'Race-sim long run';
+          else if (slot.intensity === 'tempo' && slot.discipline === 'run') session.keySession = 'Race-pace brick';
+        }
+        if (slot.discipline === 'run' && runPaces) {
+          const p = paceForRun(intensity, runPaces);
+          if (p) session.paceSecPerMile = p;
+        }
+        return { session, baseMin: slot.baseMin ?? DEFAULT_BASE_MIN[slot.intensity], isLong };
+      });
+      return { dow, sessions: working.map(w => w.session), __working: working } as BlockDay & { __working: Working[] };
     });
 
-    return { weekNumber, phase: spec.phase, isDeload: spec.isDeload, days: dayList };
+    // 2) Scale CARDIO durations so the week's endurance volume ≈ targetHours.
+    //    (Lifts are fixed and excluded from the endurance-hours pool.)
+    const allWorking = dayList.flatMap(d => (d as BlockDay & { __working?: Working[] }).__working ?? []);
+    const cardio = allWorking.filter(w => w.session.discipline !== 'lift');
+    const baseSum = cardio.reduce((s, w) => s + w.baseMin, 0);
+    if (baseSum > 0) {
+      const scale = (targetHours * 60) / baseSum;
+      for (const w of cardio) {
+        let dur = Math.round(w.baseMin * scale);
+        if (w.isLong && w.session.discipline === 'run')  dur = Math.min(dur, LONG_RUN_CAP_MIN);
+        if (w.isLong && w.session.discipline === 'bike') dur = Math.min(dur, LONG_RIDE_CAP_MIN);
+        w.session.durationMin = dur;
+        const mph = SPEED_MPH[w.session.discipline];
+        if (mph) w.session.distance = Math.round((dur / 60) * mph * 10) / 10;
+      }
+    }
+    // strip the working scratch field
+    for (const d of dayList) delete (d as BlockDay & { __working?: Working[] }).__working;
+
+    return { weekNumber, phase: spec.phase, isDeload: spec.isDeload, targetHours, days: dayList };
   });
+
+  // 3) RECOVERY BUFFER — the day AFTER any long session is forced easy/recovery
+  //    cardio (36–48h recovery cost). Walk the block chronologically (week, dow).
+  const flatDays: BlockDay[] = weeksData.flatMap(w => w.days);
+  for (let i = 0; i < flatDays.length - 1; i++) {
+    const hadLong = flatDays[i].sessions.some(s => s.intensity === 'long');
+    if (!hadLong) continue;
+    for (const s of flatDays[i + 1].sessions) {
+      if (s.discipline === 'lift') continue; // maintenance lift on an easy day is fine
+      if (s.intensity === 'threshold' || s.intensity === 'interval' || s.intensity === 'tempo' || s.intensity === 'long') {
+        s.intensity = 'easy';
+        s.zone = 'easy';
+        s.note = s.note ? `${s.note} · recovery (day after long)` : 'recovery (day after long)';
+        delete s.keySession;
+      }
+    }
+  }
 
   return {
     id: `block-${Date.now()}`,
@@ -259,12 +430,15 @@ export function generateBlockSkeleton(
 }
 
 export function defaultBlockName(goal: BlockGoal, weeks: BlockWeeks): string {
-  const g = goal === 'ironman' ? 'Ironman' : goal === 'hybrid' ? 'Hybrid' : 'Custom';
+  if (goal === 'ironman') {
+    return weeks <= 12 ? `${weeks}-Week Ironman Peak Block` : `${weeks}-Week Ironman Build`;
+  }
+  const g = goal === 'hybrid' ? 'Hybrid' : 'Custom';
   return `${weeks}-Week ${g} Block`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CALENDAR LOOKUP
+// CALENDAR LOOKUP  (unchanged)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DAY_MS = 86_400_000;
@@ -292,11 +466,11 @@ export function blockForDate(block: TrainingBlock, dateStr: string): BlockSessio
 export function weekInfoForDate(
   block: TrainingBlock,
   dateStr: string,
-): { weekNumber: number; phase: TrainingPhase; isDeload: boolean } | null {
+): { weekNumber: number; phase: TrainingPhase; isDeload: boolean; targetHours: number } | null {
   const diff = dayDiff(block.startDate, dateStr);
   if (diff < 0 || diff >= block.weeks * 7) return null;
   const wk = block.weeksData[Math.floor(diff / 7)];
-  return wk ? { weekNumber: wk.weekNumber, phase: wk.phase, isDeload: wk.isDeload } : null;
+  return wk ? { weekNumber: wk.weekNumber, phase: wk.phase, isDeload: wk.isDeload, targetHours: wk.targetHours } : null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -311,9 +485,36 @@ export function weekLoadIndex(week: BlockWeek): number {
   );
 }
 
+/** Actual planned endurance+strength hours this week (Σ durations / 60). */
+export function weekActualHours(week: BlockWeek): number {
+  return round1(weekLoadIndex(week) / 60);
+}
+
+/** Fraction of weekly CARDIO minutes spent in the easy zone (the 80/20 axis). */
+export function easyZoneFraction(week: BlockWeek): number {
+  let easy = 0, total = 0;
+  for (const d of week.days) {
+    for (const s of d.sessions) {
+      if (!s.zone) continue; // lifts excluded
+      const m = s.durationMin ?? 0;
+      total += m;
+      if (s.zone === 'easy') easy += m;
+    }
+  }
+  return total > 0 ? easy / total : 0;
+}
+
+export const EASY_ZONE_TARGET_FRACTION = EASY_ZONE_TARGET;
+
 /** Count of training days (≥1 session) in a week. */
 export function trainingDayCount(week: BlockWeek): number {
   return week.days.filter(d => d.sessions.length > 0).length;
+}
+
+/** Total planned fuelling kcal for a session (target/hr × duration). */
+export function sessionFuelKcal(s: BlockSession): number {
+  if (!s.fuelKcalPerHr || !s.durationMin) return 0;
+  return Math.round((s.fuelKcalPerHr * s.durationMin) / 60);
 }
 
 export const PHASE_LABEL: Record<TrainingPhase, string> = {
@@ -323,6 +524,10 @@ export const PHASE_LABEL: Record<TrainingPhase, string> = {
 export const INTENSITY_LABEL: Record<SessionIntensity, string> = {
   recovery: 'Recovery', easy: 'Easy', tempo: 'Tempo', threshold: 'Threshold',
   interval: 'Interval', long: 'Long', strength: 'Strength', hypertrophy: 'Hypertrophy',
+};
+
+export const ZONE_LABEL: Record<IntensityZone, string> = {
+  easy: 'Z2 Easy', threshold: 'Threshold', hard: 'Hard',
 };
 
 export const DISCIPLINE_LABEL: Record<Discipline, string> = {
@@ -352,7 +557,7 @@ export function newSessionId(): string {
 // ─────────────────────────────────────────────────────────────────────────────
 // STORAGE (window-guarded; SSR-safe). The builder triggers queueSync + dispatches
 // `que-training-block-changed` after writing — kept out of here so this module
-// has no dependency on the client-only sync engine.
+// has no dependency on the client-only sync engine.  (unchanged)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const TRAINING_BLOCK_CHANGED_EVENT = 'que-training-block-changed';
