@@ -57,6 +57,10 @@ export type BlockGoal = 'ironman' | 'hybrid' | 'custom';
 export type BlockWeeks = 4 | 6 | 8 | 10 | 12 | 16 | 24;
 export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6; // 0 = Sun … 6 = Sat
 export type AthleteLevel = 'beginner' | 'intermediate' | 'advanced';
+/** What the athlete is optimizing for — the SPINE of the custom generator. You
+ *  cannot maximize competing qualities at once (interference effect), so the
+ *  priority drives the load split and intensity choices, not an afterthought. */
+export type BlockPriority = 'strength' | 'endurance' | 'balanced';
 
 export interface BlockSession {
   id: string;
@@ -95,6 +99,10 @@ export interface TrainingBlock {
   weeksData: BlockWeek[];
   createdAt: string;        // YYYY-MM-DD
   active: boolean;          // only an active block feeds the calendar
+  // Custom-generator metadata (absent on template blocks):
+  priority?: BlockPriority;
+  rationale?: string[];     // WHY the generator made its interference choices
+  warnings?: string[];      // interference / recovery-debt cautions to surface
 }
 
 /** Length options by goal. Ironman is its OWN set: 24–52wk is a full build, so
@@ -103,8 +111,11 @@ export interface TrainingBlock {
  *  general short blocks. */
 export const BLOCK_WEEK_OPTIONS: BlockWeeks[] = [4, 6, 8, 10, 12];
 export const IRONMAN_WEEK_OPTIONS: BlockWeeks[] = [12, 16, 24];
+export const CUSTOM_WEEK_OPTIONS: BlockWeeks[] = [4, 6, 8, 10, 12, 16, 24];
 export function blockLengthOptions(goal: BlockGoal): BlockWeeks[] {
-  return goal === 'ironman' ? IRONMAN_WEEK_OPTIONS : BLOCK_WEEK_OPTIONS;
+  if (goal === 'ironman') return IRONMAN_WEEK_OPTIONS;
+  if (goal === 'custom')  return CUSTOM_WEEK_OPTIONS;
+  return BLOCK_WEEK_OPTIONS;
 }
 
 /** Honest readiness framing for an Ironman block — surfaced in the UI. [evidence]
@@ -168,6 +179,8 @@ interface SlotDef {
   timeOfDay: TimeOfDay;
   intensity: SessionIntensity;
   baseMin?: number;
+  key?: string;         // explicit peak-phase key-session name (else Ironman default)
+  note?: string;        // explanation surfaced on the session (e.g. interference pairing)
 }
 interface DayDef {
   dow: DayOfWeek;
@@ -311,10 +324,10 @@ export interface BlockGenOptions {
   runPaces?: TrainingPaces | null;
 }
 
-/** Build a full periodized block. daysPerWeek (clamped 3..6) selects how many of
- *  the template's training days survive. Session durations are scaled to a weekly
- *  HOURS target that progresses ≤10%/week; long run is capped, long ride builds
- *  to 5–6h; taper holds intensity; the day after a long session is forced easy. */
+/** Build a full periodized block from a fixed goal template. daysPerWeek
+ *  (clamped 3..6) selects how many template days survive. Durations scale to a
+ *  weekly HOURS target (≤10%/wk); long run capped, long ride builds to 5–6h;
+ *  taper holds intensity; the day after a long session is forced easy. */
 export function generateBlockSkeleton(
   goal: BlockGoal,
   weeks: BlockWeeks,
@@ -324,26 +337,58 @@ export function generateBlockSkeleton(
   opts?: BlockGenOptions,
 ): TrainingBlock {
   const layout = phaseLayout(weeks);
-  const tmpl = templateWeek(goal);
   const level = opts?.experience ?? 'intermediate';
-  const runPaces = opts?.runPaces ?? null;
-
   const days = Math.max(3, Math.min(6, Math.round(daysPerWeek)));
-  const trainingDows = new Set(
-    tmpl.filter(d => d.slots.length > 0)
-      .sort((a, b) => b.priority - a.priority)
-      .slice(0, days)
-      .map(d => d.dow),
-  );
-
   const peakHours = goalPeakHours(goal, days, level);
+  return buildBlock({
+    goal, weeks, daysPerWeek: days, startDate, name,
+    runPaces: opts?.runPaces ?? null,
+    layout, peakHours,
+    skeletonFor: () => templateWeek(goal), // same skeleton every week
+  });
+}
+
+interface BuildBlockParams {
+  goal: BlockGoal;
+  weeks: BlockWeeks;
+  daysPerWeek: number;
+  startDate: string;
+  name?: string;
+  runPaces: TrainingPaces | null;
+  layout: PhaseSpec[];
+  peakHours: number;
+  /** The skeleton PROVIDER — the only thing that differs between a fixed template
+   *  (same DayDef[] every week) and the rule-driven custom generator (skeleton
+   *  varies by week for the few-days emphasis-alternation lever). */
+  skeletonFor: (spec: PhaseSpec, weekIndex: number) => DayDef[];
+  priority?: BlockPriority;
+  rationale?: string[];
+  warnings?: string[];
+}
+
+/** Shared block-assembly core (reused by the Ironman/Hybrid templates AND the
+ *  custom interference generator): per-week trim → session build (intensity /
+ *  zone / fuel / key / pace) → scale cardio to targetHours (+caps) → recovery
+ *  buffer pass. */
+function buildBlock(p: BuildBlockParams): TrainingBlock {
+  const { layout, peakHours, skeletonFor, runPaces } = p;
+  const days = Math.max(3, Math.min(6, Math.round(p.daysPerWeek)));
   const hoursCurve = weeklyHoursPlan(layout, peakHours);
 
   const weeksData: BlockWeek[] = layout.map((spec, wi) => {
     const weekNumber = wi + 1;
     const targetHours = hoursCurve[wi];
+    const tmpl = skeletonFor(spec, wi);
 
-    // 1) Build each day's sessions with intensity/zone/flags + a working baseMin.
+    // Trim to the top-`days` priority training days (per week — identical result
+    // for a fixed template; varies for the custom emphasis-alternation lever).
+    const trainingDows = new Set(
+      tmpl.filter(d => d.slots.length > 0)
+        .sort((a, b) => b.priority - a.priority)
+        .slice(0, days)
+        .map(d => d.dow),
+    );
+
     type Working = { session: BlockSession; baseMin: number; isLong: boolean };
     const dayList: BlockDay[] = ([0, 1, 2, 3, 4, 5, 6] as DayOfWeek[]).map(dow => {
       const def = tmpl.find(d => d.dow === dow);
@@ -361,25 +406,27 @@ export function generateBlockSkeleton(
           zone: zoneFor(intensity),
         };
         if (slot.discipline === 'lift') {
-          session.durationMin = spec.isDeload ? LIFT_MIN_DELOAD : LIFT_MIN_LOAD;
+          const base = slot.baseMin ?? LIFT_MIN_LOAD; // template lifts omit baseMin → 45 (unchanged)
+          session.durationMin = spec.isDeload ? Math.round(base * (LIFT_MIN_DELOAD / LIFT_MIN_LOAD)) : base;
         }
         if (isLong) session.fuelKcalPerHr = FUEL_KCAL_PER_HR; // fuelling rehearsal
-        // Race-specific named sessions only in the peak phase.
+        // Named key sessions only in the peak phase (slot.key wins; else Ironman default).
         if (spec.phase === 'peak') {
-          if (isLong) session.keySession = slot.discipline === 'bike' ? 'Race-sim ride' : 'Race-sim long run';
+          if (slot.key) session.keySession = slot.key;
+          else if (isLong) session.keySession = slot.discipline === 'bike' ? 'Race-sim ride' : 'Race-sim long run';
           else if (slot.intensity === 'tempo' && slot.discipline === 'run') session.keySession = 'Race-pace brick';
         }
         if (slot.discipline === 'run' && runPaces) {
-          const p = paceForRun(intensity, runPaces);
-          if (p) session.paceSecPerMile = p;
+          const pc = paceForRun(intensity, runPaces);
+          if (pc) session.paceSecPerMile = pc;
         }
+        if (slot.note) session.note = slot.note;
         return { session, baseMin: slot.baseMin ?? DEFAULT_BASE_MIN[slot.intensity], isLong };
       });
       return { dow, sessions: working.map(w => w.session), __working: working } as BlockDay & { __working: Working[] };
     });
 
-    // 2) Scale CARDIO durations so the week's endurance volume ≈ targetHours.
-    //    (Lifts are fixed and excluded from the endurance-hours pool.)
+    // Scale CARDIO durations so the week's endurance volume ≈ targetHours.
     const allWorking = dayList.flatMap(d => (d as BlockDay & { __working?: Working[] }).__working ?? []);
     const cardio = allWorking.filter(w => w.session.discipline !== 'lift');
     const baseSum = cardio.reduce((s, w) => s + w.baseMin, 0);
@@ -394,20 +441,17 @@ export function generateBlockSkeleton(
         if (mph) w.session.distance = Math.round((dur / 60) * mph * 10) / 10;
       }
     }
-    // strip the working scratch field
     for (const d of dayList) delete (d as BlockDay & { __working?: Working[] }).__working;
 
     return { weekNumber, phase: spec.phase, isDeload: spec.isDeload, targetHours, days: dayList };
   });
 
-  // 3) RECOVERY BUFFER — the day AFTER any long session is forced easy/recovery
-  //    cardio (36–48h recovery cost). Walk the block chronologically (week, dow).
+  // RECOVERY BUFFER — the day AFTER any long session is forced easy/recovery cardio.
   const flatDays: BlockDay[] = weeksData.flatMap(w => w.days);
   for (let i = 0; i < flatDays.length - 1; i++) {
-    const hadLong = flatDays[i].sessions.some(s => s.intensity === 'long');
-    if (!hadLong) continue;
+    if (!flatDays[i].sessions.some(s => s.intensity === 'long')) continue;
     for (const s of flatDays[i + 1].sessions) {
-      if (s.discipline === 'lift') continue; // maintenance lift on an easy day is fine
+      if (s.discipline === 'lift') continue;
       if (s.intensity === 'threshold' || s.intensity === 'interval' || s.intensity === 'tempo' || s.intensity === 'long') {
         s.intensity = 'easy';
         s.zone = 'easy';
@@ -419,13 +463,16 @@ export function generateBlockSkeleton(
 
   return {
     id: `block-${Date.now()}`,
-    name: name ?? defaultBlockName(goal, weeks),
-    goal,
-    weeks,
-    startDate,
+    name: p.name ?? defaultBlockName(p.goal, p.weeks),
+    goal: p.goal,
+    weeks: p.weeks,
+    startDate: p.startDate,
     weeksData,
-    createdAt: startDate,
+    createdAt: p.startDate,
     active: false,
+    ...(p.priority ? { priority: p.priority } : {}),
+    ...(p.rationale ? { rationale: p.rationale } : {}),
+    ...(p.warnings ? { warnings: p.warnings } : {}),
   };
 }
 
@@ -435,6 +482,248 @@ export function defaultBlockName(goal: BlockGoal, weeks: BlockWeeks): string {
   }
   const g = goal === 'hybrid' ? 'Hybrid' : 'Custom';
   return `${weeks}-Week ${g} Block`;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CUSTOM INTERFERENCE-MANAGEMENT GENERATOR
+//
+// Generates blocks for ARBITRARY discipline combinations from interference rules
+// rather than a fixed template. The spine is PRIORITY, not equality: you cannot
+// maximize competing qualities at once (interference effect [evidence] — AMPK vs
+// mTOR signalling), so the priority drives the load split and intensity choices.
+// Reuses the Ironman engine's machinery via buildBlock (periodization, hours
+// scaling, zones, recovery buffer, VDOT paces, fuelling, calendar plumbing).
+//
+// It is interference-MINIMIZED, not interference-free — combining maximal
+// strength and maximal endurance always costs something; this optimizes the
+// tradeoff per the stated priority. The rationale[]/warnings[] explain the why.
+// ═════════════════════════════════════════════════════════════════════════════
+
+export interface CustomBlockInputs {
+  priority: BlockPriority;
+  disciplines: Discipline[];     // e.g. ['lift','run'] — includes 'lift' and/or cardio
+  daysPerWeek: number;
+  weeks: BlockWeeks;
+  startDate: string;             // YYYY-MM-DD
+  eventDate?: string;            // present → taper into it; absent → open-ended (no taper)
+  experience?: AthleteLevel;
+  runPaces?: TrainingPaces | null;
+  name?: string;
+}
+
+// Conditioning intensities. [evidence] short HIIT preserves lifting time/quality;
+// MICT (moderate continuous) is the safer concurrent dose alongside heavy lifting.
+const HIIT_MIN = 25;
+const MICT_MIN = 40;
+const STRENGTH_LIFT_MIN = 60;   // strength-primary lift sessions run longer [heuristic]
+const LONG_BASE: Partial<Record<Discipline, number>> = { bike: 180, run: 90, swim: 50 };
+// Combined quality (interval+threshold) + lifting ceiling before interference and
+// recovery debt spike. [evidence] ~2–4 hard quality sessions/week is the practical ceiling.
+const QUALITY_CEILING = 4;
+
+function clampDays(d: number): number { return Math.max(3, Math.min(6, Math.round(d))); }
+
+function pickLongDiscipline(cardio: Discipline[]): Discipline | null {
+  return cardio.includes('bike') ? 'bike' : cardio.includes('run') ? 'run' : cardio.includes('swim') ? 'swim' : null;
+}
+
+/** Session-count split between lifting and conditioning, set by PRIORITY. [evidence]
+ *  Strength-primary → bulk to lifting + minimal-effective conditioning; endurance-
+ *  primary → bulk to endurance + ~2 supporting (injury-resistance) lifts; balanced
+ *  → ~even, accepting neither maxes out. `emphasis` (few-days lever) nudges ±1. */
+function splitCounts(
+  priority: BlockPriority, days: number, hasLift: boolean, hasCardio: boolean,
+  emphasis: 'lift' | 'cardio' | null,
+): { nLift: number; nCardio: number } {
+  if (!hasLift)   return { nLift: 0, nCardio: days };
+  if (!hasCardio) return { nLift: days, nCardio: 0 };
+  let nLift =
+    priority === 'strength'  ? Math.min(4, days - 1) :
+    priority === 'endurance' ? Math.min(2, Math.max(1, days - 2)) :
+                               Math.max(2, Math.round(days / 2));
+  let nCardio = days - nLift;
+  if (emphasis === 'lift'   && nCardio > 1) { nLift++; nCardio--; }
+  if (emphasis === 'cardio' && nLift   > 1) { nLift--; nCardio++; }
+  return { nLift, nCardio };
+}
+
+interface CustomWeekOpts {
+  priority: BlockPriority;
+  days: number;
+  hasLift: boolean;
+  cardio: Discipline[];
+  separated: boolean;                  // many-days → separate by day; few-days → combine
+  emphasis: 'lift' | 'cardio' | null;
+  warnings: Set<string>;
+}
+
+const SPREAD_DOWS: DayOfWeek[] = [1, 3, 5, 2, 4, 6, 0]; // Mon Wed Fri Tue Thu Sat Sun
+
+/** Build one week's DayDef[] from the interference rules. Codifies: priority load
+ *  split, lift-before-cardio sequencing, modality-aware pairing (easy cycling with
+ *  lifting; never running on a leg day), cardio intensity by priority (HIIT off
+ *  lift days for strength; MICT for endurance), and the days-based lever. */
+function buildCustomWeek(o: CustomWeekOpts): DayDef[] {
+  const { priority, days, hasLift, cardio, separated, emphasis, warnings } = o;
+  const hasCardio = cardio.length > 0;
+  const { nLift, nCardio } = splitCounts(priority, days, hasLift, hasCardio, separated ? null : emphasis);
+
+  const liftSlot = (): SlotDef => ({
+    discipline: 'lift', timeOfDay: 'am',
+    intensity: priority === 'balanced' ? 'hypertrophy' : 'strength',
+    baseMin: priority === 'strength' ? STRENGTH_LIFT_MIN : undefined,
+    note: hasCardio ? 'Lift first, then cardio — strength before endurance protects force output.' : undefined,
+  });
+
+  // Conditioning specs (intensity + discipline + baseMin), ordered quality → long → easy.
+  const specs: { intensity: SessionIntensity; baseMin: number; disc: Discipline }[] = [];
+  if (hasCardio && nCardio > 0) {
+    let remaining = nCardio;
+    const longDisc = pickLongDiscipline(cardio);
+    // 1 quality session: HIIT for strength-primary (preserve lifting time), MICT/threshold otherwise.
+    const qual: SessionIntensity = priority === 'strength' ? 'interval' : 'threshold';
+    specs.push({ intensity: qual, baseMin: priority === 'strength' ? HIIT_MIN : MICT_MIN, disc: cardio[0] });
+    remaining--;
+    // a long aerobic session for endurance/balanced (gets fuelling + recovery buffer).
+    if (priority !== 'strength' && longDisc && remaining > 0) {
+      specs.push({ intensity: 'long', baseMin: LONG_BASE[longDisc] ?? 60, disc: longDisc });
+      remaining--;
+    }
+    let ci = 0;
+    while (remaining > 0) { const d = cardio[ci++ % cardio.length]; specs.push({ intensity: 'easy', baseMin: MICT_MIN, disc: d }); remaining--; }
+  }
+
+  const dayDefs: DayDef[] = [];
+  const order = [...SPREAD_DOWS];
+  let oi = 0;
+  const liftDows: DayOfWeek[] = [];
+
+  // Lift days first (spread).
+  for (let i = 0; i < nLift; i++) { const dow = order[oi++]; liftDows.push(dow); dayDefs.push({ dow, priority: 10 - i, slots: [liftSlot()] }); }
+
+  // Conditioning sessions.
+  const freeDows = order.slice(oi, oi + Math.max(0, days - nLift)); // dedicated cardio days
+  let freeIdx = 0;
+  for (const spec of specs) {
+    const slot: SlotDef = { discipline: spec.disc, timeOfDay: 'am', intensity: spec.intensity, baseMin: spec.baseMin };
+    if (freeIdx < freeDows.length) {
+      // its own day (separated, and the preferred placement)
+      const dow = freeDows[freeIdx++];
+      dayDefs.push({ dow, priority: 6 - freeIdx, isLongDay: spec.intensity === 'long', slots: [slot] });
+    } else if (!separated && liftDows.length > 0) {
+      // few-days: pair onto a lift day (lift AM + cardio PM). Never HIIT next to a lift
+      // (max interference) — downgrade to easy; prefer cycling, flag a forced run pairing.
+      const dow = liftDows[(freeIdx - freeDows.length) % liftDows.length];
+      const def = dayDefs.find(d => d.dow === dow)!;
+      let intensity = spec.intensity;
+      if (intensity === 'interval' || intensity === 'threshold') intensity = 'easy'; // no HIIT/quality on a lift day
+      if (spec.disc === 'run') warnings.add('Limited days force a run on a lifting day (higher interference). Add a day or include cycling to reduce it.');
+      def.slots.push({
+        discipline: spec.disc, timeOfDay: 'pm', intensity, baseMin: spec.baseMin,
+        note: spec.disc === 'bike' ? 'Cycling paired with lifting (lower interference than running).' : 'Easy only — same-day as lifting.',
+      });
+      freeIdx++;
+    } else {
+      // no room — drop (separated mode never hits this; counts are bounded by days)
+      freeIdx++;
+    }
+  }
+
+  // Few-days athletes need two-a-days to fit volume: guarantee one easy cardio
+  // paired onto a lift day (lift AM, cardio PM) — exercises sequencing + modality
+  // pairing. Cycling preferred (lower interference); a forced run pairing warns.
+  if (!separated && hasLift && hasCardio && liftDows.length > 0) {
+    const firstLift = dayDefs.find(d => d.dow === liftDows[0])!;
+    if (!firstLift.slots.some(s => s.discipline !== 'lift')) {
+      const pairDisc: Discipline = cardio.includes('bike') ? 'bike' : cardio[0];
+      if (pairDisc === 'run') warnings.add('Limited days force a run on a lifting day (higher interference). Add a day or include cycling to reduce it.');
+      firstLift.slots.push({
+        discipline: pairDisc, timeOfDay: 'pm', intensity: 'easy', baseMin: MICT_MIN,
+        note: pairDisc === 'bike' ? 'Cycling paired with lifting (peripheral, lower interference).' : 'Easy only — shared with lifting.',
+      });
+    }
+  }
+
+  return dayDefs;
+}
+
+function openEndedLayout(weeks: BlockWeeks): PhaseSpec[] {
+  // No event → no taper. Convert taper weeks to a maintenance (build2) load/deload
+  // rhythm so volume holds instead of bleeding down into a race.
+  return phaseLayout(weeks).map(s => (s.phase === 'taper' ? { phase: 'build2' as TrainingPhase, isDeload: s.isDeload } : s));
+}
+
+function primaryEmphasis(priority: BlockPriority): 'lift' | 'cardio' {
+  return priority === 'endurance' ? 'cardio' : 'lift';
+}
+
+function priorityRationale(priority: BlockPriority): string {
+  if (priority === 'strength')  return 'Strength-primary: most load goes to lifting; conditioning is minimal-effective. Endurance won’t be maximized — that’s the interference tradeoff.';
+  if (priority === 'endurance') return 'Endurance-primary: most load goes to conditioning; ~2 lifts support injury-resistance. Max strength isn’t the goal here.';
+  return 'Balanced: both qualities are trained, accepting that neither reaches its single-sport ceiling (interference effect).';
+}
+
+function customBlockName(priority: BlockPriority, weeks: BlockWeeks): string {
+  const p = priority === 'strength' ? 'Strength-primary' : priority === 'endurance' ? 'Endurance-primary' : 'Balanced';
+  return `${weeks}-Week ${p} Block`;
+}
+
+/** Generate a custom interference-managed block for an arbitrary discipline mix. */
+export function generateCustomBlock(inputs: CustomBlockInputs): TrainingBlock {
+  const days = clampDays(inputs.daysPerWeek);
+  const level = inputs.experience ?? 'intermediate';
+  const disciplines = inputs.disciplines.length ? inputs.disciplines : ['lift' as Discipline];
+  const hasLift = disciplines.includes('lift');
+  const cardio = disciplines.filter(d => d !== 'lift');
+  const separated = days >= 5; // [evidence] more days → separate strength/endurance by day;
+                               // few days → combine + alternate emphasis by block.
+
+  const warnings = new Set<string>();
+  const layout = inputs.eventDate ? phaseLayout(inputs.weeks) : openEndedLayout(inputs.weeks);
+
+  // Peak endurance hours derived from a reference week's conditioning volume (so
+  // sessions keep their intended HIIT/MICT/long lengths instead of being inflated),
+  // then scaled by experience. The ≤10%/wk progression still rides the hours curve.
+  const refWeek = buildCustomWeek({ priority: inputs.priority, days, hasLift, cardio, separated, emphasis: primaryEmphasis(inputs.priority), warnings });
+  const refCardioBase = refWeek.flatMap(d => d.slots).filter(s => s.discipline !== 'lift')
+    .reduce((s, sl) => s + (sl.baseMin ?? DEFAULT_BASE_MIN[sl.intensity]), 0);
+  const expFactor = ({ beginner: 0.85, intermediate: 1.0, advanced: 1.15 } as Record<AthleteLevel, number>)[level];
+  const peakHours = Math.max(0.5, (refCardioBase / 60) * expFactor);
+
+  const skeletonFor = (_spec: PhaseSpec, wi: number): DayDef[] => {
+    if (separated) {
+      return buildCustomWeek({ priority: inputs.priority, days, hasLift, cardio, separated: true, emphasis: null, warnings });
+    }
+    // Few-days lever: alternate emphasis by mesocycle (every ~4 weeks).
+    const meso = Math.floor(wi / 4);
+    const prim = primaryEmphasis(inputs.priority);
+    const emphasis: 'lift' | 'cardio' = meso % 2 === 0 ? prim : (prim === 'lift' ? 'cardio' : 'lift');
+    return buildCustomWeek({ priority: inputs.priority, days, hasLift, cardio, separated: false, emphasis, warnings });
+  };
+
+  // Frequency guardrail (evaluated on the reference week).
+  const qualityCardio = refWeek.flatMap(d => d.slots).filter(s => s.intensity === 'interval' || s.intensity === 'threshold').length;
+  const nLiftRef = refWeek.flatMap(d => d.slots).filter(s => s.discipline === 'lift').length;
+  if (nLiftRef + qualityCardio > QUALITY_CEILING) {
+    warnings.add(`High combined load: ${nLiftRef} lift + ${qualityCardio} quality cardio sessions/week exceeds the ~${QUALITY_CEILING}/week quality ceiling — watch recovery debt.`);
+  }
+
+  const rationale: string[] = [priorityRationale(inputs.priority)];
+  if (hasLift && cardio.length) rationale.push('Lifting is ordered before endurance on any shared day to protect force production.');
+  if (hasLift && cardio.includes('bike')) rationale.push('Easy cycling is paired with lifting days (peripheral, lower interference) rather than running with leg days.');
+  if (inputs.priority === 'strength' && cardio.length) rationale.push('Conditioning is short HIIT kept OFF lifting days — HIIT + heavy lifting the same muscle is maximal interference.');
+  if (inputs.priority === 'endurance' && hasLift) rationale.push('Strength is held at ~2 supporting sessions (injury-resistance), not maximized.');
+  rationale.push(separated
+    ? 'With 5+ days/week, strength and endurance are separated by day within the week.'
+    : 'With few days/week, emphasis alternates by block — one quality favored, then the other.');
+  rationale.push(inputs.eventDate ? 'A taper is scheduled into your event date.' : 'Open-ended fitness block — no taper; volume is maintained.');
+
+  return buildBlock({
+    goal: 'custom', weeks: inputs.weeks, daysPerWeek: days, startDate: inputs.startDate,
+    name: inputs.name ?? customBlockName(inputs.priority, inputs.weeks),
+    runPaces: inputs.runPaces ?? null, layout, peakHours, skeletonFor,
+    priority: inputs.priority, rationale, warnings: [...warnings],
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

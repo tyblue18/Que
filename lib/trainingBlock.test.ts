@@ -14,7 +14,8 @@ import {
   weekLoadIndex, trainingDayCount, isBrickDay,
   blockLengthOptions, ironmanReadinessNote, defaultBlockName,
   easyZoneFraction, sessionFuelKcal, IRONMAN_WEEK_OPTIONS,
-  type BlockWeeks, type TrainingBlock, type BlockWeek,
+  generateCustomBlock,
+  type BlockWeeks, type TrainingBlock, type BlockWeek, type BlockSession,
 } from '@/lib/trainingBlock';
 import type { TrainingPaces } from '@/lib/running/types';
 
@@ -373,5 +374,122 @@ describe('VDOT pace wiring & fuelling rehearsal', () => {
     // non-long sessions don't carry a fuelling target
     const easy = block.weeksData[0].days.flatMap(d => d.sessions).find(s => s.intensity === 'easy');
     expect(easy?.fuelKcalPerHr).toBeUndefined();
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CUSTOM INTERFERENCE-MANAGEMENT GENERATOR (Part 4)
+// ═════════════════════════════════════════════════════════════════════════════
+
+const ALL = (b: TrainingBlock) => b.weeksData.flatMap(w => w.days).flatMap(d => d.sessions);
+const minutesWhere = (b: TrainingBlock, pred: (s: BlockSession) => boolean) =>
+  ALL(b).filter(pred).reduce((s, x) => s + (x.durationMin ?? 0), 0);
+const liftCountPerWeek = (b: TrainingBlock) =>
+  b.weeksData.map(w => w.days.flatMap(d => d.sessions).filter(s => s.discipline === 'lift').length);
+const sharedDays = (w: BlockWeek) =>
+  w.days.filter(d => d.sessions.some(s => s.discipline === 'lift') && d.sessions.some(s => s.discipline !== 'lift'));
+
+describe('custom generator — priority drives the load split', () => {
+  it('strength-primary allocates the majority of load to lifting', () => {
+    const b = generateCustomBlock({ priority: 'strength', disciplines: ['lift', 'bike'], daysPerWeek: 5, weeks: 8, startDate: '2026-06-07' });
+    expect(minutesWhere(b, s => s.discipline === 'lift')).toBeGreaterThan(minutesWhere(b, s => s.discipline !== 'lift'));
+    expect(b.priority).toBe('strength');
+  });
+
+  it('endurance-primary allocates the majority of load to endurance', () => {
+    const b = generateCustomBlock({ priority: 'endurance', disciplines: ['lift', 'run'], daysPerWeek: 5, weeks: 8, startDate: '2026-06-07' });
+    expect(minutesWhere(b, s => s.discipline !== 'lift')).toBeGreaterThan(minutesWhere(b, s => s.discipline === 'lift'));
+  });
+
+  it('surfaces a rationale that names the interference tradeoff', () => {
+    const b = generateCustomBlock({ priority: 'strength', disciplines: ['lift', 'bike'], daysPerWeek: 5, weeks: 8, startDate: '2026-06-07' });
+    expect(b.rationale && b.rationale.length).toBeGreaterThan(0);
+    expect(b.rationale!.join(' ').toLowerCase()).toContain('interference');
+  });
+});
+
+describe('custom generator — interference rules', () => {
+  it('never places HIIT (interval) cardio on the same day as a lift', () => {
+    const b = generateCustomBlock({ priority: 'strength', disciplines: ['lift', 'bike'], daysPerWeek: 5, weeks: 8, startDate: '2026-06-07' });
+    expect(ALL(b).some(s => s.intensity === 'interval')).toBe(true); // bite: HIIT exists
+    for (const w of b.weeksData) for (const d of w.days) {
+      const hasInterval = d.sessions.some(s => s.intensity === 'interval');
+      const hasLift = d.sessions.some(s => s.discipline === 'lift');
+      expect(hasInterval && hasLift).toBe(false);
+    }
+  });
+
+  it('orders lifting first (AM) when a day pairs lift + cardio', () => {
+    const b = generateCustomBlock({ priority: 'balanced', disciplines: ['lift', 'bike'], daysPerWeek: 4, weeks: 8, startDate: '2026-06-07' });
+    const shared = b.weeksData.flatMap(sharedDays);
+    expect(shared.length).toBeGreaterThan(0); // few-days → two-a-days exist
+    for (const day of shared) {
+      const lift = day.sessions.find(s => s.discipline === 'lift')!;
+      expect(lift.timeOfDay).toBe('am');
+      for (const c of day.sessions.filter(s => s.discipline !== 'lift')) expect(c.timeOfDay).toBe('pm');
+    }
+  });
+
+  it('warns when a forced run-on-lift-day pairing occurs (high interference)', () => {
+    const b = generateCustomBlock({ priority: 'balanced', disciplines: ['lift', 'run'], daysPerWeek: 4, weeks: 8, startDate: '2026-06-07' });
+    expect((b.warnings ?? []).join(' ').toLowerCase()).toContain('run on a lifting day');
+  });
+});
+
+describe('custom generator — frequency guardrail', () => {
+  it('fires when combined lifting + quality cardio exceeds the ceiling', () => {
+    const b = generateCustomBlock({ priority: 'strength', disciplines: ['lift', 'bike'], daysPerWeek: 6, weeks: 8, startDate: '2026-06-07' });
+    expect((b.warnings ?? []).some(w => /recovery debt|quality ceiling/i.test(w))).toBe(true);
+  });
+
+  it('stays quiet for a modest combination', () => {
+    const b = generateCustomBlock({ priority: 'endurance', disciplines: ['lift', 'run'], daysPerWeek: 5, weeks: 8, startDate: '2026-06-07' });
+    expect((b.warnings ?? []).some(w => /recovery debt|quality ceiling/i.test(w))).toBe(false);
+  });
+});
+
+describe('custom generator — periodization lever by days available', () => {
+  it('few days/week → emphasis alternates by block (lift count varies across weeks)', () => {
+    const b = generateCustomBlock({ priority: 'strength', disciplines: ['lift', 'bike'], daysPerWeek: 3, weeks: 12, startDate: '2026-06-07' });
+    expect(new Set(liftCountPerWeek(b)).size).toBeGreaterThan(1);
+  });
+
+  it('many days/week → strength and endurance separated by day (no shared days)', () => {
+    const b = generateCustomBlock({ priority: 'balanced', disciplines: ['lift', 'run', 'bike'], daysPerWeek: 6, weeks: 8, startDate: '2026-06-07' });
+    expect(b.weeksData.every(w => sharedDays(w).length === 0)).toBe(true);
+    expect(new Set(liftCountPerWeek(b)).size).toBe(1); // fixed emphasis → constant lift count
+  });
+});
+
+describe('custom generator — taper by event date', () => {
+  it('event date → taper present', () => {
+    const b = generateCustomBlock({ priority: 'balanced', disciplines: ['lift', 'run'], daysPerWeek: 4, weeks: 8, startDate: '2026-06-07', eventDate: '2026-08-02' });
+    expect(b.weeksData.some(w => w.phase === 'taper')).toBe(true);
+  });
+
+  it('open-ended (no event date) → no taper', () => {
+    const b = generateCustomBlock({ priority: 'balanced', disciplines: ['lift', 'run'], daysPerWeek: 4, weeks: 8, startDate: '2026-06-07' });
+    expect(b.weeksData.some(w => w.phase === 'taper')).toBe(false);
+  });
+});
+
+describe('custom generator — reused recovery buffer holds', () => {
+  it('the day after a long session has no hard/long cardio', () => {
+    const b = generateCustomBlock({ priority: 'endurance', disciplines: ['lift', 'bike', 'run'], daysPerWeek: 6, weeks: 12, startDate: '2026-06-07' });
+    expect(ALL(b).some(s => s.intensity === 'long')).toBe(true); // bite: longs exist
+    const flat = b.weeksData.flatMap(w => w.days);
+    for (let i = 0; i < flat.length - 1; i++) {
+      if (!flat[i].sessions.some(s => s.intensity === 'long')) continue;
+      for (const s of flat[i + 1].sessions) {
+        if (s.discipline === 'lift') continue;
+        expect(['threshold', 'interval', 'tempo', 'long']).not.toContain(s.intensity);
+      }
+    }
+  });
+});
+
+describe('custom length options', () => {
+  it('custom offers the full range incl. long open-ended blocks', () => {
+    expect(blockLengthOptions('custom')).toEqual([4, 6, 8, 10, 12, 16, 24]);
   });
 });
