@@ -12,12 +12,13 @@ import { LIFTING_PROGRAM_KEY } from '@/lib/constants';
 import type { LiftingProgram } from '@/lib/lifting/program';
 import { queueSync, gatherSettings } from '@/lib/syncEngine';
 import {
-  generateBlockSkeleton, loadTrainingBlock, writeTrainingBlock,
+  generateBlockSkeleton, generateCustomBlock, loadTrainingBlock, writeTrainingBlock,
   trainingDayCount, isBrickDay, newSessionId,
   PHASE_LABEL, INTENSITY_LABEL, DISCIPLINE_LABEL, ZONE_LABEL, TRAINING_BLOCK_CHANGED_EVENT,
   blockLengthOptions, ironmanReadinessNote, sessionFuelKcal,
   type TrainingBlock, type BlockGoal, type BlockWeeks, type BlockSession,
   type Discipline, type TimeOfDay, type SessionIntensity, type DayOfWeek, type AthleteLevel,
+  type BlockPriority,
 } from '@/lib/trainingBlock';
 import { formatPace } from '@/lib/running/vdot';
 import type { TrainingPlan } from '@/lib/running/types';
@@ -37,8 +38,16 @@ const LIFT_INTENSITIES: SessionIntensity[]   = ['strength', 'hypertrophy'];
 const GOALS: Array<{ id: BlockGoal; label: string; hint: string }> = [
   { id: 'ironman', label: 'Ironman / Tri', hint: 'Swim · bike · run + 2 lifts, brick & long days' },
   { id: 'hybrid',  label: 'Hybrid',        hint: 'Balanced lifting + running/biking' },
-  { id: 'custom',  label: 'Blank',         hint: 'Empty weeks (phases scaffolded) — build it yourself' },
+  { id: 'custom',  label: 'Custom (built for you)', hint: 'Any mix — pick a priority + disciplines; interference-managed' },
 ];
+
+const PRIORITIES: Array<{ id: BlockPriority; label: string; hint: string }> = [
+  { id: 'strength',  label: 'Strength first',  hint: 'Most load to lifting; minimal-effective conditioning' },
+  { id: 'endurance', label: 'Endurance first', hint: 'Most load to cardio; ~2 supporting lifts' },
+  { id: 'balanced',  label: 'Balanced',        hint: 'Both — neither maxes out (interference tradeoff)' },
+];
+
+const CUSTOM_DISCIPLINES: Discipline[] = ['lift', 'run', 'bike', 'swim'];
 
 const DPW_OPTIONS = [3, 4, 5, 6];
 
@@ -102,6 +111,10 @@ export default function TrainingBlockBuilder() {
   const [dpw, setDpw] = useState(6);
   const [level, setLevel] = useState<AthleteLevel>('intermediate');
   const [startDate, setStartDate] = useState(() => sundayOnOrBefore(todayLocalStr()));
+  // custom-goal form (the interference generator)
+  const [priority, setPriority] = useState<BlockPriority>('balanced');
+  const [disciplines, setDisciplines] = useState<Discipline[]>(['lift', 'run']);
+  const [eventDate, setEventDate] = useState('');
 
   const liftProgram = useMemo(() => loadLiftingProgram(), []);
   const runPaces = useMemo(() => loadRunPaces(), []);
@@ -137,13 +150,25 @@ export default function TrainingBlockBuilder() {
     });
   }, []);
 
+  const toggleDiscipline = useCallback((d: Discipline) => {
+    setDisciplines(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]);
+  }, []);
+
   const createBlock = useCallback(() => {
     const snapped = sundayOnOrBefore(startDate);
-    const b = generateBlockSkeleton(goal, weeks, dpw, snapped, undefined, { experience: level, runPaces });
+    const b = goal === 'custom'
+      ? generateCustomBlock({
+          priority,
+          disciplines: disciplines.length ? disciplines : ['lift'],
+          daysPerWeek: dpw, weeks, startDate: snapped,
+          eventDate: eventDate ? sundayOnOrBefore(eventDate) : undefined,
+          experience: level, runPaces,
+        })
+      : generateBlockSkeleton(goal, weeks, dpw, snapped, undefined, { experience: level, runPaces });
     persist(b);
     setSelWeek(0);
     setCollapsed(false);
-  }, [goal, weeks, dpw, level, runPaces, startDate, persist]);
+  }, [goal, weeks, dpw, level, runPaces, startDate, priority, disciplines, eventDate, persist]);
 
   const week = block?.weeksData[selWeek];
 
@@ -173,6 +198,42 @@ export default function TrainingBlockBuilder() {
           ))}
         </div>
 
+        {/* Custom interference generator: priority FIRST (the spine), then disciplines. */}
+        {goal === 'custom' && (
+          <>
+            <Label>Priority — what matters most</Label>
+            <div className="flex flex-col gap-2 mb-4">
+              {PRIORITIES.map(p => (
+                <button key={p.id} type="button" onClick={() => setPriority(p.id)}
+                  className={`text-left rounded-lg border px-3 py-2.5 transition-all ${
+                    priority === p.id ? 'border-[var(--accent)] bg-[var(--accent-12)]' : 'border-[var(--line-2)] hover:border-[var(--ink-3)]'}`}>
+                  <p className="font-mono text-[12px] font-bold tracking-[0.5px]">{p.label}</p>
+                  <p className="font-mono text-[10px] text-[var(--ink-3)] mt-0.5">{p.hint}</p>
+                </button>
+              ))}
+            </div>
+
+            <Label>Disciplines</Label>
+            <div className="grid grid-cols-4 gap-2 mb-1.5">
+              {CUSTOM_DISCIPLINES.map(d => {
+                const { Icon, color } = DISC_META[d];
+                const on = disciplines.includes(d);
+                return (
+                  <button key={d} type="button" onClick={() => toggleDiscipline(d)}
+                    className={`flex flex-col items-center gap-1 rounded-lg border py-2.5 transition-all ${
+                      on ? 'border-[var(--accent)] bg-[var(--accent-12)]' : 'border-[var(--line-2)]'}`}>
+                    <Icon size={18} style={{ color: on ? color : 'var(--ink-3)' }} />
+                    <span className="font-mono text-[9px] font-bold tracking-[0.5px]">{DISCIPLINE_LABEL[d]}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="font-mono text-[9px] text-[var(--ink-3)] mb-4">
+              Interference-minimized, not interference-free — the engine optimizes the tradeoff for your priority, not both at 100%.
+            </p>
+          </>
+        )}
+
         <Label>Length{goal === 'ironman' ? ' (16–24 wk recommended)' : ''}</Label>
         <div className="flex gap-2 mb-2">
           {lengthOpts.map(w => (
@@ -184,6 +245,7 @@ export default function TrainingBlockBuilder() {
             {ironmanReadinessNote(weeks)}
           </p>
         )}
+        {goal !== 'ironman' && <div className="mb-2" />}
 
         <Label>Experience</Label>
         <div className="flex gap-2 mb-4">
@@ -203,11 +265,22 @@ export default function TrainingBlockBuilder() {
         <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
           className="que-input w-full mb-1.5 font-mono text-[12px]" />
         {runPaces && (
-          <p className="font-mono text-[9px] text-[var(--ink-3)] mb-4">
+          <p className="font-mono text-[9px] text-[var(--ink-3)] mb-1.5">
             ✓ Run paces will be pulled from your saved running plan (VDOT).
           </p>
         )}
-        {!runPaces && <div className="mb-4" />}
+
+        {goal === 'custom' && (
+          <>
+            <Label>Event date — optional (adds a taper into it)</Label>
+            <input type="date" value={eventDate} onChange={e => setEventDate(e.target.value)}
+              className="que-input w-full mb-1.5 font-mono text-[12px]" />
+            <p className="font-mono text-[9px] text-[var(--ink-3)] mb-4">
+              {eventDate ? 'Tapers into your event.' : 'No event → open-ended fitness block (no taper, volume maintained).'}
+            </p>
+          </>
+        )}
+        {goal !== 'custom' && <div className="mb-4" />}
 
         <button type="button" onClick={createBlock}
           className="w-full flex items-center justify-center gap-2 rounded-lg bg-[var(--accent)] text-[var(--bg-0)] font-mono text-[12px] font-bold uppercase tracking-[1px] py-3">
@@ -250,6 +323,30 @@ export default function TrainingBlockBuilder() {
               <Trash2 size={14} />
             </button>
           </div>
+
+          {/* Why the generator made its choices (custom blocks) */}
+          {block.rationale && block.rationale.length > 0 && (
+            <div className="mb-3 rounded-lg border border-[var(--accent-24)] bg-[var(--accent-12)] p-3">
+              <p className="font-mono text-[9px] font-bold uppercase tracking-[1px] text-[var(--accent)] mb-1.5">Why this plan</p>
+              <ul className="flex flex-col gap-1">
+                {block.rationale.map((r, i) => (
+                  <li key={i} className="font-mono text-[10px] text-[var(--ink-2)] leading-relaxed flex gap-1.5">
+                    <span className="text-[var(--accent)]">·</span> {r}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {block.warnings && block.warnings.length > 0 && (
+            <div className="mb-3 rounded-lg border border-[#FFB547]/30 bg-[#FFB547]/10 p-3">
+              <p className="font-mono text-[9px] font-bold uppercase tracking-[1px] text-[#FFB547] mb-1.5">⚠ Watch-outs</p>
+              <ul className="flex flex-col gap-1">
+                {block.warnings.map((w, i) => (
+                  <li key={i} className="font-mono text-[10px] text-[var(--ink-2)] leading-relaxed">{w}</li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {/* Week strip — bar anchored to the weekly HOURS target */}
           <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1" style={{ scrollbarWidth: 'thin' }}>
