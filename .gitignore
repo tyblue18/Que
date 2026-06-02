@@ -18,3 +18,6 @@ CLAUDE.md
 
 # TypeScript incremental build cache — must never be committed
 tsconfig.tsbuildinfo
+
+# Personal interview prep — never ship
+interview.md

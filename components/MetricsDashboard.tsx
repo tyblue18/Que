@@ -8,7 +8,8 @@ import React, {
   useState,
 } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Activity, ChevronRight, Download, Dumbbell, History, Plus, User, X } from 'lucide-react';
+import { Activity, ChevronRight, Download, Dumbbell, History, Plus, Sparkles, TrendingUp, TrendingDown, Minus, User, X } from 'lucide-react';
+import { estimateAdaptiveTDEE, countQualifyingDays, QUALIFYING_DAYS_TO_UNLOCK, type TdeeDay } from '@/lib/adaptiveTdee';
 import {
   useApp,
   type DayRecord, type UserProfile,
@@ -894,6 +895,128 @@ function WeeklyRecapCard() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SUB-COMPONENT — MaintenanceCard (adaptive TDEE)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Surfaces the adaptive-TDEE estimate (lib/adaptiveTdee) — the user's maintenance
+ * *learned from their own logs*, not a static formula. HONESTY is load-bearing
+ * here: the engine proved it returns maintenance-in-logging-units, NOT lab-true
+ * metabolic rate, so the copy says "learned from your logs," never "true TDEE."
+ *
+ * For most current users this renders the EMPTY state (needs ~10 days logging
+ * weight + food together). That state is treated as the primary experience: a
+ * motivating unlock-progress nudge, since that's the feature's near-term job.
+ */
+function MaintenanceCard({ formulaTdee }: { formulaTdee: number }) {
+  const { localDB } = useApp();
+  const u = useUnits();
+
+  const tdeeDays = useMemo<TdeeDay[]>(
+    () => Object.entries(localDB).map(([date, rec]) => ({
+      date, weight: (rec as DayRecord).weight, calsEaten: (rec as DayRecord).calsEaten,
+    })),
+    [localDB],
+  );
+
+  const result   = useMemo(() => estimateAdaptiveTDEE(tdeeDays, formulaTdee), [tdeeDays, formulaTdee]);
+  const qualDays = useMemo(() => countQualifyingDays(tdeeDays), [tdeeDays]);
+
+  const CONF_LABEL: Record<string, { text: string; color: string }> = {
+    low:    { text: 'LOW CONFIDENCE',    color: 'var(--warn)' },
+    medium: { text: 'MEDIUM CONFIDENCE', color: 'var(--accent)' },
+    high:   { text: 'HIGH CONFIDENCE',   color: 'var(--positive)' },
+  };
+
+  // ── Empty / unlock state (the primary experience for current users) ──────────
+  if (result.estimate === null) {
+    const remaining = Math.max(0, QUALIFYING_DAYS_TO_UNLOCK - qualDays);
+    const pct = Math.min(1, qualDays / QUALIFYING_DAYS_TO_UNLOCK);
+    return (
+      <div className="que-card mb-4">
+        <div className="p-5">
+          <h2 className="que-section-label mb-3"><span className="dot" />ADAPTIVE MAINTENANCE</h2>
+          <div className="flex items-start gap-2.5">
+            <Sparkles size={15} className="text-[var(--accent)] flex-shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <p className="font-mono text-[11px] text-[var(--ink-1)] leading-relaxed">
+                Log your <strong className="text-[var(--ink-0)]">weight and food on the same day</strong> about {QUALIFYING_DAYS_TO_UNLOCK} times this month to unlock a maintenance estimate learned from <em>your</em> data — not a formula.
+              </p>
+            </div>
+          </div>
+          {/* Progress toward unlock — the actual near-term function. */}
+          <div className="mt-3">
+            <div className="flex justify-between items-baseline mb-1">
+              <span className="font-mono text-[9px] font-bold uppercase tracking-[1.5px] text-[var(--ink-2)]">Qualifying days</span>
+              <span className="font-mono text-[9px] text-[var(--ink-3)] tracking-[0.5px]">{qualDays} of ~{QUALIFYING_DAYS_TO_UNLOCK}</span>
+            </div>
+            <div className="h-1.5 bg-[var(--bg-3)] rounded-full overflow-hidden">
+              <motion.div
+                className="h-full rounded-full bg-[var(--accent)]"
+                initial={{ width: 0 }} animate={{ width: `${pct * 100}%` }}
+                transition={{ duration: 0.6, ease: 'easeOut' }}
+              />
+            </div>
+            <p className="font-mono text-[8px] text-[var(--ink-3)] mt-2 tracking-[0.3px]">
+              {remaining > 0
+                ? `${remaining} more day${remaining === 1 ? '' : 's'} with both a weigh-in and a food log.`
+                : 'Almost there — keep logging consistently.'}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Estimate state ───────────────────────────────────────────────────────────
+  const conf = CONF_LABEL[result.confidence] ?? CONF_LABEL.low;
+  const trendLb = result.weightTrendLb ?? 0;
+  const TrendIcon = trendLb < -0.2 ? TrendingDown : trendLb > 0.2 ? TrendingUp : Minus;
+  const trendWord = trendLb < -0.2 ? 'losing' : trendLb > 0.2 ? 'gaining' : 'holding steady';
+  const diffFromFormula = result.estimate - formulaTdee;
+
+  return (
+    <div className="que-card mb-4">
+      <div className="p-5">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="que-section-label !mb-0"><span className="dot" />ADAPTIVE MAINTENANCE</h2>
+          <span className="font-mono text-[8px] font-bold tracking-[1px] px-2 py-0.5 rounded" style={{ color: conf.color, background: 'var(--bg-2)' }}>
+            {conf.text}
+          </span>
+        </div>
+
+        <div className="flex items-baseline gap-2">
+          <span className="font-display text-[32px] leading-none text-[var(--ink-0)]">{Math.round(result.estimate).toLocaleString()}</span>
+          <span className="font-mono text-[10px] text-[var(--ink-3)] tracking-[0.5px]">kcal / day</span>
+        </div>
+        <p className="font-mono text-[9px] text-[var(--ink-2)] mt-1.5 tracking-[0.3px] leading-relaxed">
+          Your estimated maintenance, <strong className="text-[var(--ink-1)]">learned from your logs</strong>.
+          {Math.abs(diffFromFormula) >= 30 && (
+            <> That&apos;s {Math.abs(diffFromFormula)} kcal {diffFromFormula > 0 ? 'above' : 'below'} the formula estimate.</>
+          )}
+        </p>
+
+        {/* The "why" — weight trend context makes the number credible, not magic. */}
+        <div className="flex items-center gap-2 mt-3 pt-3 border-t border-[var(--line)]">
+          <TrendIcon size={14} className="text-[var(--ink-2)] flex-shrink-0" />
+          <span className="font-mono text-[9px] text-[var(--ink-2)] tracking-[0.3px]">
+            Based on your weight {trendWord}
+            {Math.abs(trendLb) > 0.2 && <> {u.fmtWeight(Math.abs(trendLb))}</>} over {result.windowDays} days, across {result.daysUsed} logged days.
+          </span>
+        </div>
+
+        {/* Transparency: the raw adaptive number behind the blended estimate. */}
+        {result.adaptiveRaw !== null && result.adaptiveRaw !== result.estimate && (
+          <p className="font-mono text-[8px] text-[var(--ink-3)] mt-2 tracking-[0.3px]">
+            Blended with the baseline formula for stability · raw signal: {result.adaptiveRaw.toLocaleString()} kcal
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SUB-COMPONENT — WeeklyVolumeCard
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1528,6 +1651,8 @@ export default function MetricsDashboard({ openProfileSignal = 0 }: { openProfil
       {profileOpen && <div ref={profileRef}><ProfilePanel profile={profile} onChange={handleProfileChange} onOpenPlan={() => setPlanOpen(true)} onOpenRunPlan={() => setRunPlanOpen(true)} onOpenLiftPlan={() => setLiftPlanOpen(true)} onOpenHistory={() => setHistoryOpen(true)} /></div>}
 
       <CalorieBudgetCard m={m} onOpenProgress={() => setProgressOpen(true)} prFlags={prFlags} />
+
+      <MaintenanceCard formulaTdee={m.tdee} />
 
       <WeeklyVolumeCard />
       <TrophyCaseCard />

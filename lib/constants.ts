@@ -70,6 +70,11 @@ export const GETTING_STARTED_KEY = 'queGettingStarted';
 // Structured lifting program (split + prescribed sets/reps). Synced via SETTINGS_KEYS.
 export const LIFTING_PROGRAM_KEY = 'queLiftingProgram';
 
+// Last adaptive-TDEE estimate the user was shown in a weekly recap — used to
+// detect a meaningful week-over-week change ("updated to X") vs. a stable
+// estimate ("held steady"). Device-local; { weekId, estimate, confidence }.
+export const ADAPTIVE_TDEE_LAST_KEY = 'queAdaptiveTdeeLast';
+
 // App owner — the account that receives user-submitted suggestions
 // (/api/feedback push). Same address used for the web-push VAPID contact.
 export const OWNER_EMAIL = 'tanishqsomania21@gmail.com';

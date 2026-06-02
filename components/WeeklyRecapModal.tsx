@@ -2,9 +2,9 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { X, Dumbbell, Footprints, Flame, Trophy, TrendingUp, Target, Bike } from 'lucide-react';
+import { X, Dumbbell, Footprints, Flame, Trophy, TrendingUp, Target, Bike, Sparkles } from 'lucide-react';
 import { useApp } from '@/lib/AppContext';
-import { computeWeeklyRecap, hasRecapData, recapSunday, type WeeklyRecap } from '@/lib/weeklyRecap';
+import { computeWeeklyRecap, hasRecapData, recapSunday, markRecapMaintenanceShown, type WeeklyRecap } from '@/lib/weeklyRecap';
 
 const SEEN_KEY = 'queWeeklyRecapSeen';
 
@@ -82,13 +82,16 @@ export function WeeklyRecapModal() {
   }, []);
 
   const dismiss = () => {
-    if (recap) { try { localStorage.setItem(SEEN_KEY, recap.weekId); } catch { /* noop */ } }
+    if (recap) {
+      try { localStorage.setItem(SEEN_KEY, recap.weekId); } catch { /* noop */ }
+      markRecapMaintenanceShown(recap); // advance the maintenance baseline now that it's been seen
+    }
     setOpen(false);
   };
 
   if (!recap) return null;
 
-  const { cardio, lifts, steps, nutrition, plan, weight } = recap;
+  const { cardio, lifts, steps, nutrition, plan, weight, maintenance } = recap;
   const headline = recap.highlights[0] ?? 'Here\'s how your week went';
 
   return (
@@ -137,6 +140,36 @@ export function WeeklyRecapModal() {
                 <StatTile value={String(recap.daysLogged)} unit="/7" label="Days Logged" />
                 <StatTile value={fmt(steps.total)} label="Total Steps" accent="positive" />
               </div>
+
+              {/* Adaptive maintenance — the weekly recalibration beat. Honest:
+                  "updated" only on a real change, else "held steady". */}
+              {maintenance && maintenance.status !== 'locked' && maintenance.estimate != null && (
+                <Section icon={<Sparkles size={13} />} title="Maintenance">
+                  {maintenance.status === 'updated' ? (
+                    <p className="font-mono text-[11px] text-[var(--ink-1)] leading-relaxed">
+                      Your estimated maintenance{' '}
+                      {maintenance.previous != null && (
+                        <>moved from <span className="text-[var(--ink-3)]">{maintenance.previous.toLocaleString()}</span> to </>
+                      )}
+                      <span className="text-[var(--accent)] font-bold">{maintenance.estimate.toLocaleString()} kcal</span> this week — learned from your logs.
+                    </p>
+                  ) : (
+                    <p className="font-mono text-[11px] text-[var(--ink-1)] leading-relaxed">
+                      Your estimated maintenance held steady at{' '}
+                      <span className="text-[var(--accent)] font-bold">{maintenance.estimate.toLocaleString()} kcal</span>.
+                    </p>
+                  )}
+                </Section>
+              )}
+              {maintenance?.status === 'locked' && maintenance.qualifyingDays != null && (
+                <Section icon={<Sparkles size={13} />} title="Maintenance">
+                  <p className="font-mono text-[10px] text-[var(--ink-2)] leading-relaxed">
+                    Keep logging your weight and food together — your maintenance estimate unlocks at{' '}
+                    <span className="text-[var(--ink-0)]">{maintenance.needed}</span> qualifying days
+                    {' '}(<span className="text-[var(--accent)]">{maintenance.qualifyingDays}</span> so far).
+                  </p>
+                </Section>
+              )}
 
               {/* Lifts */}
               {lifts.sessions > 0 && (

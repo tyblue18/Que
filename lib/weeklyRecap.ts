@@ -12,7 +12,9 @@
 
 import type { LocalDB, DayRecord, ExerciseEntry, SetData, UserProfile } from '@/lib/AppContext';
 import { loadPlan, getPlanBaseline, type AthletePlan } from '@/lib/metricsTypes';
-import { isGoalDay, dayMaintenanceFromRecord, type PlanDirection } from '@/lib/calorie-utils';
+import { isGoalDay, dayMaintenanceFromRecord, computeBaseBudget, type PlanDirection } from '@/lib/calorie-utils';
+import { estimateAdaptiveTDEE, countQualifyingDays, QUALIFYING_DAYS_TO_UNLOCK, type TdeeDay, type TdeeConfidence } from '@/lib/adaptiveTdee';
+import { ADAPTIVE_TDEE_LAST_KEY } from '@/lib/constants';
 
 // ── date helpers ────────────────────────────────────────────────────────────
 
@@ -119,9 +121,26 @@ export interface WeeklyRecap {
     avgDailyKcal:  number;
   };
 
+  /** Adaptive maintenance estimate (learned from logs), when enough data exists.
+   *  `status` drives the honest weekly beat: 'updated' only on a meaningful
+   *  delta, 'steady' otherwise, 'locked' when still unlocking. */
+  maintenance?: {
+    status:     'updated' | 'steady' | 'locked';
+    estimate?:  number;            // current blended estimate (kcal), when unlocked
+    previous?:  number;            // last shown estimate, when status === 'updated'
+    confidence?: TdeeConfidence;
+    qualifyingDays?: number;       // progress, when status === 'locked'
+    needed?:    number;            // qualifying days needed to unlock
+  };
+
   /** Punchy one-liners for the modal header rotation. */
   highlights: string[];
 }
+
+// Meaningful week-over-week change: > this many kcal OR a confidence-band shift.
+// Below it we say "held steady" — manufacturing a weekly "updated!" when the
+// number barely moved trains users to ignore the signal. [heuristic]
+const MAINTENANCE_DELTA_KCAL = 50;
 
 // ── the computation ─────────────────────────────────────────────────────────
 
@@ -300,6 +319,44 @@ export function computeWeeklyRecap(
   }
   if (onTargetDays >= 5) highlights.push(`${onTargetDays}/7 days on your calorie goal 🎯`);
 
+  // ── Adaptive maintenance — the weekly recalibration beat ───────────────────
+  // Estimated from the FULL history (the engine windows internally), with the
+  // Mifflin formula as the fallback/clamp anchor. Honest stability detection:
+  // compare to the last estimate we showed; only call it "updated" on a real
+  // delta or a confidence-band change. Skipped server-side (no localStorage).
+  let maintenance: WeeklyRecap['maintenance'];
+  if (typeof window !== 'undefined') {
+    const tdeeDays: TdeeDay[] = Object.entries(localDB).map(([date, rec]) => ({
+      date, weight: (rec as DayRecord).weight, calsEaten: (rec as DayRecord).calsEaten,
+    }));
+    // Reconstruct full TDEE: computeBaseBudget = round(bmr×mul) − deficit, so
+    // + deficit recovers bmr×mul. ⚠️ MUST stay equal to the MaintenanceCard's
+    // direct `m.tdee` read (MetricsDashboard) — both feed the SAME engine, so if
+    // the budget formula ever changes, this reconstruction has to change with it
+    // or the card and the recap will silently disagree on the same user's number.
+    const formulaTdee = computeBaseBudget(profile) + (num(profile.deficit) || 0);
+    const r = estimateAdaptiveTDEE(tdeeDays, formulaTdee > 0 ? formulaTdee : computeBaseBudget(profile));
+
+    if (r.estimate === null) {
+      maintenance = { status: 'locked', qualifyingDays: countQualifyingDays(tdeeDays), needed: QUALIFYING_DAYS_TO_UNLOCK };
+    } else {
+      // Read last shown estimate; decide updated vs steady.
+      let prev: { weekId?: string; estimate?: number; confidence?: TdeeConfidence } | null = null;
+      try { prev = JSON.parse(localStorage.getItem(ADAPTIVE_TDEE_LAST_KEY) ?? 'null'); } catch { /* ignore */ }
+      const changed =
+        !prev?.estimate ||
+        Math.abs(r.estimate - prev.estimate) > MAINTENANCE_DELTA_KCAL ||
+        prev.confidence !== r.confidence;
+      maintenance = changed
+        ? { status: 'updated', estimate: r.estimate, previous: prev?.estimate, confidence: r.confidence }
+        : { status: 'steady',  estimate: r.estimate, confidence: r.confidence };
+      // NOTE: we do NOT persist the baseline here — this function stays pure-ish
+      // (a read is fine; a write isn't). The caller calls markRecapMaintenanceShown()
+      // when the recap is actually SHOWN, so a background compute can't silently
+      // advance the baseline and swallow a real "updated" the user never saw.
+    }
+  }
+
   return {
     weekId:     sundayStr,
     rangeLabel: `${fmtShort(weekStart)} – ${fmtShort(sundayStr)}`,
@@ -334,6 +391,7 @@ export function computeWeeklyRecap(
       avgProtein:   proteinDays > 0 ? Math.round(proteinSum / proteinDays) : 0,
     },
     plan,
+    maintenance,
     highlights,
   };
 }
@@ -341,4 +399,19 @@ export function computeWeeklyRecap(
 /** True if there's enough logged this week to bother showing a recap. */
 export function hasRecapData(r: WeeklyRecap): boolean {
   return r.workoutDays > 0 || r.nutrition.daysLogged > 0 || r.steps.total > 0;
+}
+
+/** Persist the maintenance estimate the user was just SHOWN, so next week's
+ *  recap compares against it (updated vs. steady). Call this only when the recap
+ *  is actually displayed — keeping computeWeeklyRecap free of side effects so a
+ *  background compute can't advance the baseline and swallow a real change. */
+export function markRecapMaintenanceShown(r: WeeklyRecap): void {
+  if (typeof window === 'undefined') return;
+  const m = r.maintenance;
+  if (!m || m.estimate == null) return;
+  try {
+    localStorage.setItem(ADAPTIVE_TDEE_LAST_KEY, JSON.stringify({
+      weekId: r.weekId, estimate: m.estimate, confidence: m.confidence,
+    }));
+  } catch { /* storage full */ }
 }
