@@ -43,7 +43,7 @@ import { alternativesFor, MUSCLE_LABEL } from '@/lib/lifting/alternatives';
 import { useUnits } from '@/lib/units';
 import { streakEndingAt } from '@/lib/streaks';
 import {
-  loadActiveTrainingBlock, blockForDate, weekInfoForDate, sessionFuelKcal,
+  loadActiveTrainingBlock, blockForDate, weekInfoForDate, sessionFuelKcal, blockLiftPlaceholderName,
   DISCIPLINE_LABEL, INTENSITY_LABEL, PHASE_LABEL, TRAINING_BLOCK_CHANGED_EVENT,
   type TrainingBlock, type BlockSession, type Discipline,
 } from '@/lib/trainingBlock';
@@ -446,12 +446,16 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
   // path the lifting builder uses (WorkoutLogger appends + derives cardio burn).
   const loadBlockSession = useCallback((s: BlockSession) => {
     if (s.discipline === 'lift') {
-      const day = program?.days.find(d => d.name === s.liftDayName);
+      // Linked to a lifting-program day → load its real exercises. Otherwise a
+      // generic strength placeholder named from INTENSITY (never the note — the
+      // note is a coaching rationale, not an exercise name; that mis-named the lift).
+      const day = s.liftDayName ? program?.days.find(d => d.name === s.liftDayName) : undefined;
+      const placeholderName = blockLiftPlaceholderName(s);
       const entries: ExerciseEntry[] = day
         ? buildProgramDayEntries(day, localDB as Record<string, LoggedDay>, todayStr, loadLiftPRs(LIFT_PRS_KEY))
-        : [{ k: 'lift', n: s.note?.trim() || 'Strength', sets: [{ r: '', w: '' }, { r: '', w: '' }, { r: '', w: '' }] }];
+        : [{ k: 'lift', n: placeholderName, sets: [{ r: '', w: '' }, { r: '', w: '' }, { r: '', w: '' }], ...(s.note ? { note: s.note } : {}) }];
       window.dispatchEvent(new CustomEvent('que-load-program-day', {
-        detail: { exercises: entries, dayName: s.liftDayName ?? 'Strength' },
+        detail: { exercises: entries, dayName: s.liftDayName ?? placeholderName },
       }));
     } else {
       const dur = s.durationMin ? String(s.durationMin) : '';

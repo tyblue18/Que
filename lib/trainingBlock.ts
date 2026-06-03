@@ -806,6 +806,15 @@ export function sessionFuelKcal(s: BlockSession): number {
   return Math.round((s.fuelKcalPerHr * s.durationMin) / 60);
 }
 
+/** Placeholder exercise NAME for an unlinked lift session loaded onto the calendar.
+ *  Derived from intensity ONLY — never the session's note (a note is a coaching
+ *  rationale like "Lift first, then cardio…", not an exercise name). When a lift
+ *  session is linked to a LiftingProgram day (liftDayName), the calendar loads
+ *  that day's real exercises instead and this isn't used. */
+export function blockLiftPlaceholderName(s: BlockSession): string {
+  return s.intensity === 'hypertrophy' ? 'Hypertrophy' : 'Strength';
+}
+
 export const PHASE_LABEL: Record<TrainingPhase, string> = {
   base: 'Base', build1: 'Build', build2: 'Build', peak: 'Peak', taper: 'Taper',
 };

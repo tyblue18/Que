@@ -14,7 +14,7 @@ import {
   weekLoadIndex, trainingDayCount, isBrickDay,
   blockLengthOptions, ironmanReadinessNote, defaultBlockName,
   easyZoneFraction, sessionFuelKcal, IRONMAN_WEEK_OPTIONS,
-  generateCustomBlock,
+  generateCustomBlock, blockLiftPlaceholderName,
   type BlockWeeks, type TrainingBlock, type BlockWeek, type BlockSession,
 } from '@/lib/trainingBlock';
 import type { TrainingPaces } from '@/lib/running/types';
@@ -491,5 +491,25 @@ describe('custom generator — reused recovery buffer holds', () => {
 describe('custom length options', () => {
   it('custom offers the full range incl. long open-ended blocks', () => {
     expect(blockLengthOptions('custom')).toEqual([4, 6, 8, 10, 12, 16, 24]);
+  });
+});
+
+describe('loading an unlinked lift session names it from intensity, NOT the note', () => {
+  // Regression: the calendar "Load" used the session NOTE as the exercise name,
+  // so a custom block's lift (note = "Lift first, then cardio…") loaded an
+  // exercise literally named with that rationale sentence.
+  it('placeholder name is Strength/Hypertrophy, never the rationale note', () => {
+    expect(blockLiftPlaceholderName({ id: 'x', discipline: 'lift', timeOfDay: 'am', intensity: 'strength' })).toBe('Strength');
+    expect(blockLiftPlaceholderName({ id: 'x', discipline: 'lift', timeOfDay: 'am', intensity: 'hypertrophy' })).toBe('Hypertrophy');
+  });
+
+  it('a generated custom lift session carries a note, but its loaded name is not that note', () => {
+    const b = generateCustomBlock({ priority: 'strength', disciplines: ['lift', 'bike'], daysPerWeek: 5, weeks: 8, startDate: '2026-06-07' });
+    const lift = b.weeksData.flatMap(w => w.days).flatMap(d => d.sessions).find(s => s.discipline === 'lift')!;
+    expect(lift.note && lift.note.length).toBeGreaterThan(0);          // note is a rationale sentence
+    expect(lift.liftDayName).toBeUndefined();                          // unlinked → uses placeholder
+    const name = blockLiftPlaceholderName(lift);
+    expect(name).toBe('Strength');
+    expect(name).not.toBe(lift.note);                                  // the bug: name === note
   });
 });
