@@ -774,10 +774,7 @@ function PostCard({ post, onLike, onDelete }: { post: Post; onLike: () => void; 
   const stamp  = `${mdy(post.date)} · ${fmtTimeOfDay(post.createdAt)}`;
 
   return (
-    <div
-      className="rounded-xl border border-[var(--line-2)] bg-[var(--bg-1)] overflow-hidden"
-      style={{ boxShadow: '0 1px 0 rgba(255,255,255,0.02) inset, 0 6px 18px rgba(0,0,0,0.28)' }}
-    >
+    <div className="rounded-xl border border-black bg-[var(--bg-1)] overflow-hidden">
       {/* Header — avatar, name/time, volume */}
       <div className="flex items-start gap-3 px-4 pt-4 pb-3">
         <Avatar p={post.author} size={38} />
