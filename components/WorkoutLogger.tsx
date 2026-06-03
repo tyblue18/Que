@@ -30,6 +30,7 @@ import { deriveCardioFields } from '@/lib/cardioSync';
 import { isGoalDay, dayMaintenanceFromRecord, type PlanDirection } from '@/lib/calorie-utils';
 import { ActivityIcon, PRLiveBadge } from '@/components/ActivityIcon';
 import { AutoCropImage } from '@/components/AutoCropImage';
+import { ShareWorkoutPrompt } from '@/components/social/ShareWorkoutPrompt';
 import { ExerciseHistoryModal } from '@/components/ExerciseHistory';
 import { parseEx, serializeEx, normalizeSets, applyLoggedSet } from '@/lib/exerciseSerial';
 import { useUnits } from '@/lib/units';
@@ -940,6 +941,8 @@ export default function WorkoutLogger() {
   const [saveFlash, setSaveFlash] = useState(false);
   const [loggedFlash, setLoggedFlash] = useState(false);
   const [showSessionRating, setShowSessionRating] = useState(false);
+  // After the post-session check-in, prompt to share the workout to groups.
+  const [shareDate, setShareDate] = useState<string | null>(null);
   const [templateModal, setTemplateModal] = useState(false);
   const [saveModal, setSaveModal] = useState(false);
   const [historyEx, setHistoryEx] = useState<string | null>(null);
@@ -2689,7 +2692,7 @@ export default function WorkoutLogger() {
           feel:   Number(localDB[activeDayFocus]?.sessFeel ?? 0),
           notes,
         }}
-        onClose={() => setShowSessionRating(false)}
+        onClose={() => { setShowSessionRating(false); setShareDate(activeDayFocus); }}
         onSave={({ rating, feel, notes: n }) => {
           updateDayRecord(activeDayFocus, {
             ...(rating > 0 && { sessRating: rating }),
@@ -2698,8 +2701,15 @@ export default function WorkoutLogger() {
           });
           setNotesRaw(n);
           setShowSessionRating(false);
+          setShareDate(activeDayFocus);
         }}
       />
+
+      {/* Post-commit: prompt to share the workout to groups (self-closes if the
+          user has no groups / nothing to share). */}
+      {shareDate && (
+        <ShareWorkoutPrompt date={shareDate} localDB={localDB} onClose={() => setShareDate(null)} />
+      )}
 
       {/* Badge earned modal — centered, celebrate animation, haptic */}
       <AnimatePresence>

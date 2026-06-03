@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
 import { MessageCircle, Trash2, X, Bookmark, Plus, Send, Swords, Settings, UserPlus, LogOut, BarChart3 } from 'lucide-react';
 import { useApp } from '@/lib/AppContext';
-import type { DayRecord, ExerciseEntry } from '@/lib/AppContext';
+import type { DayRecord } from '@/lib/AppContext';
+import { summarizeDay, type CardioSeg, type WorkoutItem } from '@/lib/shareWorkout';
 import { getWorkoutPresets, saveWorkoutPresets } from '@/lib/storage';
 import { BATTLE_CATEGORIES } from '@/lib/battle-categories';
 import { CreateTeamBattle } from '@/components/social/TeamBattles';
@@ -12,7 +13,6 @@ import { GroupLeaderboard } from '@/components/social/GroupLeaderboard';
 interface MemberLite { id: string; name: string | null; username: string | null; photo: string | null }
 interface GroupLite  { id: string; name: string; ownerId: string; isOwner: boolean; members: MemberLite[]; description?: string | null; createdAt?: string }
 
-interface CardioSeg { kind: 'run' | 'bike' | 'swim'; dist: number; time: number }
 interface PostPayload { title?: string; lines?: string[]; items?: WorkoutItem[]; exercises?: string; liftCount?: number; setCount?: number; volume?: number; cardio?: CardioSeg[] }
 interface Post {
   id: string; date: string; note: string | null; payload: PostPayload; createdAt: string;
@@ -21,7 +21,6 @@ interface Post {
 }
 interface Comment { id: string; text: string; createdAt: string; author: { id: string; name: string | null; username: string | null } }
 
-const num = (v: unknown) => { const n = parseFloat(String(v ?? '0')); return Number.isFinite(n) ? n : 0; };
 const mdy = (iso: string) => { const [y, m, d] = iso.split('-'); return `${m}/${d}/${y}`; };
 const NM  = (p: { name: string | null; username: string | null }) => p.name ?? (p.username ? `@${p.username}` : 'Athlete');
 
@@ -38,43 +37,6 @@ function Avatar({ p, size = 30 }: { p: { name: string | null; username: string |
   );
 }
 
-interface WorkoutItem { kind: 'lift' | 'run' | 'bike' | 'swim'; name: string; detail: string; group: string }
-interface DaySummary { title: string; items: WorkoutItem[]; lines: string[]; exercises: string; liftCount: number; setCount: number; volume: number; cardio: CardioSeg[]; hasContent: boolean }
-
-/** Build a structured, shareable summary + raw exercises from a day's record. */
-function summarizeDay(rec: DayRecord | undefined): DaySummary {
-  const empty: DaySummary = { title: '', items: [], lines: [], exercises: '[]', liftCount: 0, setCount: 0, volume: 0, cardio: [], hasContent: false };
-  if (!rec) return empty;
-  let exs: ExerciseEntry[] = [];
-  try { exs = JSON.parse(rec.exercises ?? '[]'); } catch { /* corrupt */ }
-  const lifts  = Array.isArray(exs) ? exs.filter(e => e.k === 'lift') : [];
-  const groups = new Set<string>();
-  const items: WorkoutItem[] = [];
-  const lines: string[] = [];
-  let setCount = 0;
-  let volume = 0;
-  for (const ex of lifts) {
-    if (ex.g) groups.add(ex.g);
-    const sets = Array.isArray(ex.sets) && ex.sets.length
-      ? ex.sets
-      : (ex.s ? Array.from({ length: parseInt(ex.s) || 1 }, () => ({ r: ex.r ?? '', w: ex.w ?? '' })) : []);
-    setCount += sets.length;
-    volume += sets.reduce((sum, s) => sum + (parseFloat(String(s.r ?? '')) || 0) * (parseFloat(String(s.w ?? '')) || 0), 0);
-    const detail = sets.length ? sets.map(s => (s.w ? `${s.r}×${s.w}` : `${s.r}`)).filter(Boolean).join(', ') : '';
-    const name = ex.n ?? 'Exercise';
-    items.push({ kind: 'lift', name, detail, group: ex.g || 'Other' });
-    lines.push(`${name}${detail ? ` — ${detail}` : ''}`);
-  }
-  const cardio: CardioSeg[] = [];
-  const run = num(rec.runDist), runT = num(rec.runTime);
-  if (run > 0) { items.push({ kind: 'run', name: 'Run', detail: `${run} mi${runT ? ` · ${runT} min` : ''}`, group: 'Cardio' }); lines.push(`Ran ${run} mi`); cardio.push({ kind: 'run', dist: run, time: runT }); }
-  const bike = num(rec.bikeDist), bikeT = num(rec.bikeTime);
-  if (bike > 0) { items.push({ kind: 'bike', name: 'Bike', detail: `${bike} mi${bikeT ? ` · ${bikeT} min` : ''}`, group: 'Cardio' }); lines.push(`Biked ${bike} mi`); cardio.push({ kind: 'bike', dist: bike, time: bikeT }); }
-  const swim = num(rec.swimDist), swimT = num(rec.swimTime);
-  if (swim > 0 || swimT > 0) { items.push({ kind: 'swim', name: 'Swim', detail: `${swim ? `${swim} mi` : ''}${swimT ? `${swim ? ' · ' : ''}${swimT} min` : ''}`, group: 'Cardio' }); lines.push('Swam'); cardio.push({ kind: 'swim', dist: swim, time: swimT }); }
-  const title = groups.size ? Array.from(groups).slice(0, 3).join(' · ') : (items.length ? 'Workout' : '');
-  return { title, items, lines, exercises: rec.exercises ?? '[]', liftCount: lifts.length, setCount, volume: Math.round(volume), cardio, hasContent: items.length > 0 };
-}
 
 const KIND_ICON: Record<string, string> = { lift: '🏋️', run: '🏃', bike: '🚴', swim: '🏊' };
 
@@ -812,7 +774,10 @@ function PostCard({ post, onLike, onDelete }: { post: Post; onLike: () => void; 
   const stamp  = `${mdy(post.date)} · ${fmtTimeOfDay(post.createdAt)}`;
 
   return (
-    <div className="que-card p-0 overflow-hidden">
+    <div
+      className="rounded-xl border border-[var(--line-2)] bg-[var(--bg-1)] overflow-hidden"
+      style={{ boxShadow: '0 1px 0 rgba(255,255,255,0.02) inset, 0 6px 18px rgba(0,0,0,0.28)' }}
+    >
       {/* Header — avatar, name/time, volume */}
       <div className="flex items-start gap-3 px-4 pt-4 pb-3">
         <Avatar p={post.author} size={38} />
