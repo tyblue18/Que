@@ -23,12 +23,13 @@ import prData from '@/public/PR_animation.json';
 import {
   type CardioFields, type BudgetMetrics, type PRFlags,
   EMPTY_CARDIO, INTENSITY_LABELS,
-  useBudgetMetrics, computeCardioBurn, loadPlan, savePlanToStorage, intensityForKcal,
+  useBudgetMetrics, loadPlan, savePlanToStorage, intensityForKcal,
   loadPlanHistory,
   getPlanBaseline, planExpectedChange,
   dayMaintenance, parseNum, fmt, fmtDateLong, toDateStr,
 } from '@/lib/metricsTypes';
 import { drawLineChart } from '@/lib/metricsCharts';
+import { parseExercises, deriveCardioFields, setCardioOfKind, existingCardioDistance } from '@/lib/cardioSync';
 import { useUnits, kgToLb, cmToIn } from '@/lib/units';
 import { Measurements } from '@/components/metrics/Measurements';
 import { ProgressPhoto } from '@/components/metrics/ProgressPhoto';
@@ -353,37 +354,39 @@ function CalorieBudgetCard({ m, onOpenProgress, prFlags }: {
     setCardioModal(kind);
   }, [getDayRecord, activeDayFocus, u]);
 
+  // Write cardio through the EXERCISES ARRAY (the source of truth) and derive the
+  // top-level fields, so cardio logged here also shows on the calendar / day
+  // summary and can't desync from the workout log. See lib/cardioSync.
+  const writeCardio = useCallback((kind: 'run' | 'bike' | 'swim', distanceMi: number, durationMin: number) => {
+    const rec = getDayRecord(activeDayFocus) as { exercises?: unknown };
+    const entries = parseExercises(rec.exercises);
+    const next = setCardioOfKind(entries, kind, distanceMi, durationMin);
+    const derived = deriveCardioFields(next, profile);
+    updateDayRecord(activeDayFocus, { exercises: JSON.stringify(next), ...derived } as Parameters<typeof updateDayRecord>[1]);
+  }, [activeDayFocus, updateDayRecord, getDayRecord, profile]);
+
   const submitCardio = useCallback(() => {
     if (!cardioModal) return;
     const cfg = CARDIO_QUICK_CFG[cardioModal];
-    const f1IsDistance = cfg.f1key === 'runDist' || cfg.f1key === 'bikeDist';
     const f1val = parseFloat(f1) || 0;
-    const updates: Partial<Record<string, number>> = { [cfg.f1key]: f1IsDistance ? u.toStoredDistance(f1val) : f1val };
-    if (cfg.f2key) updates[cfg.f2key] = parseFloat(f2) || 0;
-    // Recompute `burn` from the FULL day's cardio (existing fields overlaid with
-    // this edit, which lives in `updates` keyed by the field name) so the stored
-    // burn stays in sync wherever cardio is logged.
-    const rec = getDayRecord(activeDayFocus) as Record<string, unknown>;
-    updates.burn = computeCardioBurn(profile, {
-      steps:    '0',
-      runDist:  String(updates.runDist  ?? rec.runDist  ?? 0),
-      runTime:  String(updates.runTime  ?? rec.runTime  ?? 0),
-      bikeDist: String(updates.bikeDist ?? rec.bikeDist ?? 0),
-      bikeTime: String(updates.bikeTime ?? rec.bikeTime ?? 0),
-      swimTime: String(updates.swimTime ?? rec.swimTime ?? 0),
-    }).activityBurn;
-    updateDayRecord(activeDayFocus, updates as Parameters<typeof updateDayRecord>[1]);
+    const f2val = cfg.f2key ? (parseFloat(f2) || 0) : 0;
+    let distanceMi = 0;
+    let durationMin = 0;
+    if (cardioModal === 'swim') {
+      // Swim modal edits TIME only (f1) — preserve any existing logged distance.
+      durationMin = f1val;
+      distanceMi = existingCardioDistance(parseExercises((getDayRecord(activeDayFocus) as { exercises?: unknown }).exercises), 'swim');
+    } else {
+      distanceMi = u.toStoredDistance(f1val); // display unit → canonical miles
+      durationMin = f2val;
+    }
+    writeCardio(cardioModal, distanceMi, durationMin);
     setCardioModal(null);
-  }, [cardioModal, f1, f2, activeDayFocus, updateDayRecord, getDayRecord, profile, u]);
+  }, [cardioModal, f1, f2, activeDayFocus, getDayRecord, writeCardio, u]);
 
   const clearCardio = useCallback((kind: 'run' | 'bike' | 'swim') => {
-    const clears: Partial<Record<string, number>> = kind === 'run'
-      ? { runDist: 0, runTime: 0 }
-      : kind === 'bike'
-      ? { bikeDist: 0, bikeTime: 0 }
-      : { swimTime: 0 };
-    updateDayRecord(activeDayFocus, clears as Parameters<typeof updateDayRecord>[1]);
-  }, [activeDayFocus, updateDayRecord]);
+    writeCardio(kind, 0, 0); // 0/0 → removes the kind from the array + zeroes derived fields
+  }, [writeCardio]);
 
   const todayRec = localDB[activeDayFocus] ?? {};
   const runDist  = parseNum(String(todayRec.runDist  ?? 0));

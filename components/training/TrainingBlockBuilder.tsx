@@ -165,12 +165,25 @@ export default function TrainingBlockBuilder() {
           experience: level, runPaces,
         })
       : generateBlockSkeleton(goal, weeks, dpw, snapped, undefined, { experience: level, runPaces });
+    b.active = true; // a freshly built plan is live on the calendar immediately
     persist(b);
     setSelWeek(0);
     setCollapsed(false);
   }, [goal, weeks, dpw, level, runPaces, startDate, priority, disciplines, eventDate, persist]);
 
   const week = block?.weeksData[selWeek];
+
+  // Where "today" sits in the block — drives the live status header.
+  const planStatus = useMemo(() => {
+    if (!block) return null;
+    const diff = Math.floor(
+      (Date.parse(todayStr + 'T00:00:00Z') - Date.parse(block.startDate + 'T00:00:00Z')) / 86_400_000,
+    );
+    if (diff < 0) return { state: 'upcoming' as const, startsInDays: -diff };
+    if (diff >= block.weeks * 7) return { state: 'done' as const };
+    const wkIdx = Math.floor(diff / 7);
+    return { state: 'live' as const, wkIdx, week: block.weeksData[wkIdx] };
+  }, [block, todayStr]);
 
   // ── New-block (empty) state ────────────────────────────────────────────────
   if (!block) {
@@ -291,38 +304,73 @@ export default function TrainingBlockBuilder() {
   }
 
   // ── Existing block ───────────────────────────────────────────────────────
+  const statusSubline = block.active
+    ? planStatus?.state === 'live'
+      ? `Week ${planStatus.wkIdx + 1} of ${block.weeks} · ${planStatus.week.phase === 'taper' ? 'Taper' : planStatus.week.isDeload ? 'Deload' : PHASE_LABEL[planStatus.week.phase]}`
+      : planStatus?.state === 'upcoming'
+        ? `Starts in ${planStatus.startsInDays} day${planStatus.startsInDays === 1 ? '' : 's'}`
+        : 'Completed'
+    : `${block.weeks} weeks · ${trainingDayCount(block.weeksData[0])} days/wk`;
+
   return (
-    <section className="rounded-xl border border-[var(--line)] bg-[var(--bg-1)]">
+    <section
+      className="rounded-xl border bg-[var(--bg-1)] overflow-hidden"
+      style={block.active
+        ? { borderColor: 'var(--accent)', boxShadow: '0 0 0 1px var(--accent), 0 0 24px var(--accent-24)' }
+        : { borderColor: 'var(--line)' }}
+    >
       {/* Header */}
-      <button type="button" onClick={() => setCollapsed(c => !c)}
-        className="w-full flex items-center justify-between px-4 py-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <Layers size={18} className="text-[var(--accent)] flex-shrink-0" />
-          <div className="text-left min-w-0">
-            <h2 className="font-display text-[16px] tracking-[1px] truncate">{block.name.toUpperCase()}</h2>
-            <p className="font-mono text-[9px] text-[var(--ink-3)] tracking-[0.5px]">
-              {block.weeks} weeks · {block.active ? 'ACTIVE' : 'draft'}
-            </p>
+      <div className="flex items-center gap-3 px-4 py-3.5">
+        <button type="button" onClick={() => setCollapsed(c => !c)} className="flex items-center gap-3 min-w-0 flex-1 text-left">
+          <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${block.active ? '' : 'border border-[var(--line-2)]'}`}
+            style={block.active ? { background: 'var(--accent)' } : { background: 'var(--bg-3)' }}>
+            <Layers size={18} style={{ color: block.active ? 'var(--bg-0)' : 'var(--ink-3)' }} />
           </div>
+          <div className="min-w-0">
+            <h2 className="font-display text-[15px] tracking-[1px] truncate leading-tight">{block.name.toUpperCase()}</h2>
+            <p className="font-mono text-[9px] tracking-[0.5px] text-[var(--ink-3)] mt-0.5">{statusSubline}</p>
+          </div>
+        </button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {block.active ? (
+            <span className="flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[1px] text-[var(--bg-0)]"
+              style={{ background: 'var(--accent)' }}>
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--bg-0)] animate-pulse" /> Active
+            </span>
+          ) : (
+            <span className="rounded-full border border-[#FFB547]/50 px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[1px] text-[#FFB547]">Draft</span>
+          )}
+          <button type="button" onClick={() => setCollapsed(c => !c)} className="text-[var(--ink-3)]">
+            <ChevronDown size={18} className={`transition-transform ${collapsed ? '' : 'rotate-180'}`} />
+          </button>
         </div>
-        <ChevronDown size={18} className={`text-[var(--ink-3)] transition-transform ${collapsed ? '' : 'rotate-180'}`} />
-      </button>
+      </div>
+
+      {/* Live status / activate banner — visible even when collapsed */}
+      {block.active ? (
+        <div className="mx-4 mb-3 flex items-center gap-2.5 rounded-lg border border-[var(--accent-24)] bg-[var(--accent-12)] px-3 py-2">
+          <Check size={14} className="text-[var(--accent)] flex-shrink-0" />
+          <p className="font-mono text-[10px] text-[var(--ink-2)] leading-snug flex-1">
+            On your calendar — planned sessions appear each day with a one-tap Load.
+          </p>
+          {planStatus?.state === 'live' && (
+            <span className="font-mono text-[11px] font-bold text-[var(--accent)] flex-shrink-0">{planStatus.week.targetHours}h</span>
+          )}
+        </div>
+      ) : (
+        <div className="mx-4 mb-3 flex items-center gap-2.5 rounded-lg border border-[#FFB547]/30 bg-[#FFB547]/10 px-3 py-2">
+          <p className="font-mono text-[10px] text-[var(--ink-2)] leading-snug flex-1">
+            <span className="font-bold text-[#FFB547]">Draft</span> — not on your calendar yet.
+          </p>
+          <button type="button" onClick={() => mutate(b => { b.active = true; })}
+            className="flex items-center gap-1.5 rounded-md bg-[var(--accent)] text-[var(--bg-0)] px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-[1px] flex-shrink-0">
+            <CalendarClock size={11} /> Activate
+          </button>
+        </div>
+      )}
 
       {!collapsed && (
         <div className="px-4 pb-4">
-          {/* Activate / discard */}
-          <div className="flex gap-2 mb-4">
-            <button type="button" onClick={() => mutate(b => { b.active = !b.active; })}
-              className={`flex-1 flex items-center justify-center gap-1.5 rounded-lg border py-2 font-mono text-[10px] font-bold uppercase tracking-[1px] transition-all ${
-                block.active ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--bg-0)]' : 'border-[var(--accent)] text-[var(--accent)]'}`}>
-              {block.active ? <><Check size={12} /> Active on calendar</> : <><CalendarClock size={12} /> Activate</>}
-            </button>
-            <button type="button"
-              onClick={() => { if (confirm('Discard this training block?')) persist(null); }}
-              className="rounded-lg border border-[var(--line-2)] px-3 text-[var(--ink-3)] hover:text-[var(--danger)] hover:border-[var(--danger)] transition-colors">
-              <Trash2 size={14} />
-            </button>
-          </div>
 
           {/* Why the generator made its choices (custom blocks) */}
           {block.rationale && block.rationale.length > 0 && (
@@ -457,6 +505,21 @@ export default function TrainingBlockBuilder() {
               })}
             </div>
           )}
+
+          {/* Footer: deactivate / discard */}
+          <div className="flex items-center justify-between mt-4 pt-3 border-t border-[var(--line)]">
+            {block.active ? (
+              <button type="button" onClick={() => mutate(b => { b.active = false; })}
+                className="font-mono text-[9px] font-bold uppercase tracking-[1px] text-[var(--ink-3)] hover:text-[var(--ink-1)] transition-colors">
+                Deactivate
+              </button>
+            ) : <span />}
+            <button type="button"
+              onClick={() => { if (confirm('Discard this training block?')) persist(null); }}
+              className="flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-[1px] text-[var(--ink-3)] hover:text-[var(--danger)] transition-colors">
+              <Trash2 size={12} /> Discard plan
+            </button>
+          </div>
         </div>
       )}
 

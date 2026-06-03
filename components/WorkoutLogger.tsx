@@ -25,7 +25,8 @@ import {
 import {
   LIFT_PRS_KEY, MILLION_GROUPS_KEY, SHOWN_BADGES_KEY,
 } from '@/lib/constants';
-import { computeCardioBurn, loadPlan } from '@/lib/metricsTypes';
+import { loadPlan } from '@/lib/metricsTypes';
+import { deriveCardioFields } from '@/lib/cardioSync';
 import { isGoalDay, dayMaintenanceFromRecord, type PlanDirection } from '@/lib/calorie-utils';
 import { ActivityIcon, PRLiveBadge } from '@/components/ActivityIcon';
 import { AutoCropImage } from '@/components/AutoCropImage';
@@ -990,28 +991,12 @@ export default function WorkoutLogger() {
       const raw   = serializeEx(arr);
       // Mark this as our own write so the external-change detector ignores it.
       lastOwnWriteRef.current = raw;
-      const runs  = arr.filter(e => e.k === 'run');
-      const bikes = arr.filter(e => e.k === 'bike');
-      const swims = arr.filter(e => e.k === 'swim');
-      const runDist  = runs.reduce((s, e)  => s + (parseFloat(e.v1 ?? '0') || 0), 0);
-      const runTime  = runs.reduce((s, e)  => s + (parseFloat(e.v2 ?? '0') || 0), 0);
-      const bikeDist = bikes.reduce((s, e) => s + (parseFloat(e.v1 ?? '0') || 0), 0);
-      const bikeTime = bikes.reduce((s, e) => s + (parseFloat(e.v2 ?? '0') || 0), 0);
-      const swimTime = swims.reduce((s, e) => s + (parseFloat(e.v1 ?? '0') || 0), 0);
-      const swimDist = swims.reduce((s, e) => s + (parseFloat(e.v2 ?? '0') || 0), 0);
-      // Store `burn` here too — it's a pure function of profile + this day's
-      // cardio, so it must be kept in sync wherever cardio is written (not only
-      // on the Calories tab's "Log Today"). Steps live on the day record
-      // separately and don't affect activityBurn.
-      const burn = computeCardioBurn(profile, {
-        steps: '0',
-        runDist:  String(runDist),  runTime:  String(runTime),
-        bikeDist: String(bikeDist), bikeTime: String(bikeTime),
-        swimTime: String(swimTime),
-      }).activityBurn;
+      // Derive the top-level cardio fields (+ burn) from the exercises array via
+      // the SHARED helper, so this and the Metrics quick-cardio modal can't drift.
+      const cardio = deriveCardioFields(arr, profile);
       updateDayRecord(activeDayFocus, {
         exercises: raw, notes: notesTxt,
-        runDist, runTime, bikeDist, bikeTime, swimTime, swimDist, burn,
+        ...cardio,
       });
       // Recompute all-time PRs from the full localDB so corrections flow back down.
       // Scan every OTHER day for historical maxes, then overlay today's arr.
