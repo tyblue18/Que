@@ -133,12 +133,6 @@
   color-scheme: light;
 }
 
-[data-theme="light"] body::before {
-  background-image:
-    linear-gradient(to right, rgba(0,0,0,0.04) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(0,0,0,0.04) 1px, transparent 1px);
-}
-
 /* Activity icon filters — dark mode: invert to white; light mode: green tint when active */
 .activity-icon-active   { filter: invert(1); transition: filter 350ms ease; }
 .activity-icon-inactive { filter: invert(1) grayscale(1) opacity(0.18); transition: filter 350ms ease; }
@@ -175,20 +169,6 @@
 @layer base {
   * { @apply border-border outline-ring/40; }
   body { @apply bg-background text-foreground; font-feature-settings: 'ss01','cv11','tnum'; }
-
-  /* Subtle 1px grid overlay — printed on the page background */
-  body::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: 1;
-    background-image:
-      linear-gradient(to right, rgba(255,255,255,0.018) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(255,255,255,0.018) 1px, transparent 1px);
-    background-size: 64px 64px;
-    mask-image: radial-gradient(ellipse 90% 70% at 50% 30%, #000 0%, transparent 80%);
-  }
 }
 
 /* ════════════════════════════════════════════════════════════════════════
