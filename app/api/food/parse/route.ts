@@ -3,17 +3,22 @@
  *
  * "2 eggs and a banana" → [{ Egg ×2 }, { Banana ×1 }], each with REAL macros.
  *
- * ── The grounding contract (why this is trustworthy + cheap) ────────────────
- * The LLM does TWO things: (1) turn messy free text into structured intent
- * ({ query, quantity, unit }), and (2) estimate the PORTION SIZE in grams. It
- * NEVER produces calories or macros — energy DENSITY is always looked up from
- * the same USDA + Open Food Facts DB the manual search uses (via /api/food/search,
- * reusing its ranking, plausibility guard, and Redis cache). So the final
- * calories = DB density × estimated grams: a hallucinated calorie DENSITY is
- * structurally impossible (it comes from the database), and the portion is a
- * user-adjustable estimate. This fixes the old bug where every item was logged
- * as `quantity × 100 g` (so "2 eggs" ≈ 286 kcal instead of ~140). An item the DB
- * can't match is returned as `matched: false` for manual search — never invented.
+ * ── Hybrid grounding (AI estimate, DB-confirmed when confident) ─────────────
+ * The LLM extracts each food ({ query, quantity, unit }), estimates its PORTION
+ * (grams), AND estimates its macros. We then look the food up in the same USDA +
+ * Open Food Facts DB the manual search uses (/api/food/search) and PREFER the DB
+ * macros ONLY when it is confidently the SAME food — the DB name matches the query
+ * AND its energy density agrees with the estimate (or it is a USDA whole-food with
+ * a strong name match). Otherwise we keep the AI estimate.
+ *
+ * Why hybrid: pure DB-grounding was brittle — the search often ranked a wrong
+ * Open Food Facts item first (e.g. "banana" → a branded "Banana" candy), so a
+ * confidently-WRONG "grounded" number got shown. The AI estimate is accurate for
+ * common foods and never shows the wrong food; the DB cross-check upgrades it to
+ * lab-accurate numbers when it clearly matches, and catches a bad estimate too.
+ * Items are tagged `source: 'db' | 'ai'` so the UI can label AI estimates
+ * honestly. Portion is per-unit grams, so "2 eggs" logs ~100 g (≈140 kcal), not
+ * the old `quantity × 100 g` (≈286 kcal).
  *
  * Cost is bounded: input capped at 300 chars (validator), structured output only
  * (no free-form generation), a small/cheap model (gpt-4o-mini), and identical
@@ -53,24 +58,32 @@ export async function GET(): Promise<NextResponse> {
 // provider reads OPENAI_API_KEY from the environment.
 const PARSE_MODEL = openai('gpt-4o-mini');
 
-// What the LLM returns — INTENT + PORTION SIZE, never calories/macros.
+// What the LLM returns — intent + portion + an ESTIMATE of macros (which the DB
+// can confirm/override). The model is a generalist that knows common foods well.
 const parsedSchema = z.object({
   items: z.array(z.object({
     query:    z.string().describe('a concise, generic, searchable food name, e.g. "egg", "banana", "greek yogurt", "white rice cooked" (drop brands/adjectives unless essential)'),
     quantity: z.number().positive().describe('the COUNT of units eaten; default 1 if unstated ("a"/"an"/"some" → 1)'),
     unit:     z.string().describe('short label for ONE unit: "egg", "slice", "cup", "g", "oz", or "serving"'),
-    grams:    z.number().positive().describe('best estimate of the TOTAL grams eaten for this item, using typical portion sizes — portion SIZE only, NEVER calories. e.g. 2 eggs ≈ 100, a banana ≈ 120, a cup of cooked rice ≈ 158'),
+    grams:    z.number().positive().describe('best estimate of the TOTAL grams eaten for this item. e.g. 2 eggs ≈ 100, a banana ≈ 120, a cup of cooked rice ≈ 158'),
+    kcal:     z.number().nonnegative().describe('estimated TOTAL calories for the amount eaten, using standard nutrition values for the food'),
+    protein:  z.number().nonnegative().describe('estimated TOTAL protein in grams'),
+    carbs:    z.number().nonnegative().describe('estimated TOTAL carbohydrates in grams'),
+    fat:      z.number().nonnegative().describe('estimated TOTAL fat in grams'),
   })).max(15),
 });
 
-interface LlmItem { query: string; quantity: number; unit: string; grams: number }
+interface LlmItem {
+  query: string; quantity: number; unit: string; grams: number;
+  kcal: number; protein: number; carbs: number; fat: number;
+}
 
 interface NormalizedProduct {
   product_name:     string;
   brands?:          string;
   serving_size:     string;
   serving_quantity: number;
-  source:           string;
+  source:           string;        // 'usda' | 'off' | 'ai'
   nutriments: Record<string, number>;
 }
 interface ParsedItem {
@@ -79,10 +92,12 @@ interface ParsedItem {
   unit?:    string;
   grams?:   number;
   matched:  boolean;
-  product?: NormalizedProduct; // top DB hit, with serving rewritten to the portion
+  source?:  'db' | 'ai';           // where the shown macros came from
+  product?: NormalizedProduct;     // serving rewritten to the per-unit portion
 }
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
+const titleCase = (s: string) => s.replace(/\b\w/g, c => c.toUpperCase());
 
 /** Build the serving label + grams-per-unit from the LLM's unit + per-unit grams.
  *  serving_quantity is grams of ONE unit, so the client's `servings = quantity`
@@ -94,29 +109,68 @@ function buildServing(unit: string, gramsPerUnit: number): { serving_size: strin
   return { serving_size: weightLike ? `${g} g` : `1 ${u} (~${g} g)`, serving_quantity: g };
 }
 
-/** Ground one parsed item against the existing food-search endpoint (same
- *  ranking + plausibility + cache), then REWRITE the product's serving to the
- *  estimated portion so the logged calories reflect the real amount eaten. */
+/** Per-100g density from the LLM's TOTAL macros + estimated total grams. */
+function densityFromTotals(m: { kcal: number; protein: number; carbs: number; fat: number }, grams: number): Record<string, number> {
+  const f = grams > 0 ? 100 / grams : 1;
+  return {
+    'energy-kcal_100g':  Math.round(Math.max(0, m.kcal) * f),
+    proteins_100g:       Math.round(Math.max(0, m.protein) * f * 10) / 10,
+    carbohydrates_100g:  Math.round(Math.max(0, m.carbs)   * f * 10) / 10,
+    fat_100g:            Math.round(Math.max(0, m.fat)     * f * 10) / 10,
+  };
+}
+
+/**
+ * Ground one item: start from the AI estimate, then UPGRADE to the DB's macros
+ * only when the DB top hit is confidently the same food. The serving is always
+ * rewritten to the per-unit portion so the logged calories reflect the amount eaten.
+ */
 async function groundItem(item: LlmItem, origin: string): Promise<ParsedItem> {
   const query    = item.query;
   const quantity = item.quantity > 0 ? item.quantity : 1;
-  // Total grams the user ate; fall back to 100 g/unit if the model omitted it.
   const totalGrams   = item.grams && item.grams > 0 ? clamp(item.grams, 1, 3000) : 100 * quantity;
   const gramsPerUnit = clamp(totalGrams / quantity, 1, 3000);
+  const serving = buildServing(item.unit ?? '', gramsPerUnit);
   const base = { query, quantity, unit: item.unit, grams: Math.round(totalGrams) };
+
+  const aiDensity = densityFromTotals(item, totalGrams);
+  const aiKcal    = aiDensity['energy-kcal_100g'];
+  const aiProduct: NormalizedProduct = {
+    product_name: titleCase(query),
+    serving_size: serving.serving_size,
+    serving_quantity: serving.serving_quantity,
+    source: 'ai',
+    nutriments: aiDensity,
+  };
+
+  // Try the DB; failure or no hit just means we keep the AI estimate.
+  let top: NormalizedProduct | null = null;
   try {
     const res = await fetch(`${origin}/api/food/search?q=${encodeURIComponent(query)}`, {
       signal: AbortSignal.timeout(6000),
     });
-    if (!res.ok) return { ...base, matched: false };
-    const data = await res.json() as { products?: NormalizedProduct[] };
-    const top  = data.products?.[0];
-    if (!top) return { ...base, matched: false };
-    const serving = buildServing(item.unit ?? '', gramsPerUnit);
-    return { ...base, matched: true, product: { ...top, ...serving } };
-  } catch {
-    return { ...base, matched: false };
+    if (res.ok) {
+      const data = await res.json() as { products?: NormalizedProduct[] };
+      top = data.products?.[0] ?? null;
+    }
+  } catch { /* search down → AI estimate */ }
+
+  if (top) {
+    const name    = top.product_name.toLowerCase();
+    const qWords  = query.toLowerCase().split(/\s+/).filter(w => w.length > 1);
+    const nameMatch = qWords.length > 0 && qWords.every(w => name.includes(w));
+    const exactish  = name === query.toLowerCase() || name.startsWith(query.toLowerCase());
+    const dbKcal    = top.nutriments['energy-kcal_100g'] ?? 0;
+    // DB density must agree with the estimate (catches "banana" → banana bread),
+    // unless it's a USDA whole-food with a strong name match (lab-authoritative).
+    const densityClose = aiKcal <= 0 || Math.abs(dbKcal - aiKcal) <= Math.max(50, aiKcal * 0.45);
+    const trustDb = nameMatch && (densityClose || (top.source === 'usda' && exactish));
+    if (trustDb) {
+      return { ...base, matched: true, source: 'db', product: { ...top, ...serving } };
+    }
   }
+
+  return { ...base, matched: aiKcal > 0, source: 'ai', product: aiKcal > 0 ? aiProduct : undefined };
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
@@ -134,7 +188,7 @@ export async function POST(req: Request): Promise<NextResponse> {
 
   // Cache identical phrases (the parse is deterministic enough; macros refresh
   // via the search cache underneath). Keyed on lowercased text.
-  const cacheKey = `foodparse:v2:${text.toLowerCase()}`;
+  const cacheKey = `foodparse:v3:${text.toLowerCase()}`;
   try {
     const cached = await redis.get<{ items: ParsedItem[] }>(cacheKey);
     if (cached) return NextResponse.json({ ...cached, configured: true, cached: true });
@@ -147,17 +201,17 @@ export async function POST(req: Request): Promise<NextResponse> {
       model:  PARSE_MODEL,
       schema: parsedSchema,
       system:
-        'You convert a short meal description into a structured list of foods with PORTION SIZES. ' +
-        'For each food return: query (a concise, generic, searchable name — drop brands/adjectives ' +
-        'unless essential), quantity (the count of units, default 1; "a"/"an"/"some" → 1), unit (a ' +
-        'short label for ONE unit: "egg", "slice", "cup", "g", "oz", "serving"), and grams (your best ' +
-        'estimate of the TOTAL grams eaten for this item). ' +
+        'You convert a short meal description into a structured list of foods. For each food return: ' +
+        'query (a concise, generic, searchable name — drop brands/adjectives unless essential), ' +
+        'quantity (the count of units, default 1; "a"/"an"/"some" → 1), unit (a short label for ONE ' +
+        'unit: "egg", "slice", "cup", "g", "oz", "serving"), grams (your best estimate of the TOTAL ' +
+        'grams eaten), and the estimated TOTAL macros for that amount: kcal, protein, carbs, fat (grams). ' +
         'Split combined foods ("eggs and toast" → two items). Use typical portion weights: 1 large egg ' +
         '≈ 50 g, 1 medium banana ≈ 120 g, 1 slice bread ≈ 30 g, 1 cup cooked rice ≈ 158 g, 1 cup cooked ' +
         'pasta ≈ 140 g, 1 chicken breast ≈ 170 g, 1 tbsp oil ≈ 14 g, 1 cup milk ≈ 244 g, 1 apple ≈ 180 g. ' +
         'If the user states an explicit weight ("200 g pasta", "8 oz chicken"), use it (1 oz ≈ 28 g) with ' +
-        'unit "g" and quantity 1. NEVER output calories or macros — only names and portion sizes. ' +
-        'Ignore non-food text (greetings, feelings).',
+        'unit "g" and quantity 1. Base macros on standard nutrition values for the food and the portion ' +
+        'size. Ignore non-food text (greetings, feelings).',
       prompt: text,
       // Hard cap so a pathological input can't run up tokens.
       maxOutputTokens: 600,

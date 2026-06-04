@@ -81,6 +81,7 @@ export interface OFFProduct {
   brands?: string;
   serving_size?: string;
   serving_quantity?: number | string;
+  source?: string;       // 'usda' | 'off' | 'ai' — 'ai' = LLM-estimated macros
   nutriments: OFFNutriments;
 }
 
@@ -132,6 +133,13 @@ function FoodDetailSheet({ product, barcode, onAdd, onBack, initialServings }: {
           {product.brands && <p className="font-mono text-[9px] text-[var(--ink-3)]">{product.brands}</p>}
         </div>
       </div>
+
+      {/* AI-estimate disclosure — these macros are the model's estimate, not the DB's */}
+      {product.source === 'ai' && (
+        <p className="font-mono text-[9px] text-[#FFB547] bg-[#FFB547]/10 border border-[#FFB547]/25 rounded-md px-2.5 py-1.5 mb-3 leading-relaxed">
+          AI estimate — not found in the food database. Double-check and adjust the servings if needed.
+        </p>
+      )}
 
       {/* Macro preview */}
       <div className="rounded border border-[var(--line-2)] bg-[var(--bg-2)] p-3 mb-4">
@@ -579,7 +587,7 @@ export function AddFoodModal({ open, onClose, onAdd }: {
   // server-side, so a parsed item carries a real OFFProduct + the parsed qty.
   const [nlText,    setNlText]    = useState('');
   const [nlParsing, setNlParsing] = useState(false);
-  const [nlItems,   setNlItems]   = useState<Array<{ query: string; quantity: number; unit?: string; grams?: number; matched: boolean; product?: OFFProduct }> | null>(null);
+  const [nlItems,   setNlItems]   = useState<Array<{ query: string; quantity: number; unit?: string; grams?: number; matched: boolean; source?: 'db' | 'ai'; product?: OFFProduct }> | null>(null);
   // Whether the Quick Log feature is available (server has an AI key). Probed
   // once on open via GET /api/food/parse so the tab's presence is correct from
   // the start — never shows a tab that would dead-end.
@@ -782,7 +790,7 @@ export function AddFoodModal({ open, onClose, onAdd }: {
       });
       const data = await res.json() as {
         configured?: boolean;
-        items?: Array<{ query: string; quantity: number; unit?: string; grams?: number; matched: boolean; product?: OFFProduct }>;
+        items?: Array<{ query: string; quantity: number; unit?: string; grams?: number; matched: boolean; source?: 'db' | 'ai'; product?: OFFProduct }>;
         error?: string;
       };
       if (data.configured === false) { setNlEnabled(false); setMode('search'); return; } // feature off → fall back to search
@@ -1003,7 +1011,7 @@ export function AddFoodModal({ open, onClose, onAdd }: {
                       {nlItems && nlItems.length > 0 && (
                         <div className="space-y-1.5">
                           <p className="font-mono text-[9px] font-bold uppercase tracking-[1px] text-[var(--ink-3)]">
-                            Tap to add ({nlItems.filter(i => i.matched).length} found)
+                            Tap to add ({nlItems.filter(i => i.matched).length})
                           </p>
                           {nlItems.map((it, i) => it.matched && it.product ? (
                             <button
@@ -1012,9 +1020,14 @@ export function AddFoodModal({ open, onClose, onAdd }: {
                               className="w-full flex items-center justify-between gap-3 rounded-md border border-[var(--line-2)] bg-[var(--bg-2)] px-3 py-2.5 text-left hover:border-[var(--accent)] transition-colors"
                             >
                               <div className="min-w-0">
-                                <p className="font-mono text-[11px] font-semibold text-[var(--ink-0)] truncate">
-                                  {it.quantity > 1 ? `${it.quantity}× ` : ''}{it.product.product_name}
-                                </p>
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <p className="font-mono text-[11px] font-semibold text-[var(--ink-0)] truncate">
+                                    {it.quantity > 1 ? `${it.quantity}× ` : ''}{it.product.product_name}
+                                  </p>
+                                  {it.source === 'ai'
+                                    ? <span className="flex-shrink-0 font-mono text-[7px] font-bold uppercase tracking-[0.5px] rounded px-1 py-px text-[#FFB547] border border-[#FFB547]/40">AI est</span>
+                                    : <span className="flex-shrink-0 font-mono text-[7px] font-bold uppercase tracking-[0.5px] rounded px-1 py-px text-[var(--accent)] border border-[var(--accent-24)]">DB</span>}
+                                </div>
                                 <p className="font-mono text-[8px] text-[var(--ink-3)]">
                                   {it.grams ? `~${it.grams} g · ` : ''}tap to review &amp; add
                                 </p>

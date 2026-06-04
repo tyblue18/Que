@@ -847,7 +847,11 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
                 </span>
               </div>
             ) : null}
-            {isToday && nextPlanDay && (
+            {/* The lifting-program "next day" button advances by its OWN cursor,
+                independent of the calendar/date — so when a training block is
+                ACTIVE (the multi-discipline plan that IS date-scheduled), hide it
+                so the calendar shows ONE plan, not two conflicting ones. */}
+            {isToday && nextPlanDay && !activeBlock && (
               <button
                 type="button"
                 onClick={openPlanPicker}
