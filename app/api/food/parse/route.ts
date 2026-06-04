@@ -4,13 +4,16 @@
  * "2 eggs and a banana" → [{ Egg ×2 }, { Banana ×1 }], each with REAL macros.
  *
  * ── The grounding contract (why this is trustworthy + cheap) ────────────────
- * The LLM does ONE job: turn messy free text into structured intent
- * ({ query, quantity }). It NEVER produces nutrition numbers — those are looked
- * up from the same USDA + Open Food Facts DB the manual search uses (via the
- * existing /api/food/search, reusing its ranking, plausibility guard, and Redis
- * cache). So a hallucinated calorie count is structurally impossible: the model
- * can only name a food; the macros come from the database. An item the DB can't
- * match is returned as `matched: false` for manual search — never invented.
+ * The LLM does TWO things: (1) turn messy free text into structured intent
+ * ({ query, quantity, unit }), and (2) estimate the PORTION SIZE in grams. It
+ * NEVER produces calories or macros — energy DENSITY is always looked up from
+ * the same USDA + Open Food Facts DB the manual search uses (via /api/food/search,
+ * reusing its ranking, plausibility guard, and Redis cache). So the final
+ * calories = DB density × estimated grams: a hallucinated calorie DENSITY is
+ * structurally impossible (it comes from the database), and the portion is a
+ * user-adjustable estimate. This fixes the old bug where every item was logged
+ * as `quantity × 100 g` (so "2 eggs" ≈ 286 kcal instead of ~140). An item the DB
+ * can't match is returned as `matched: false` for manual search — never invented.
  *
  * Cost is bounded: input capped at 300 chars (validator), structured output only
  * (no free-form generation), a small/cheap model (gpt-4o-mini), and identical
@@ -50,13 +53,17 @@ export async function GET(): Promise<NextResponse> {
 // provider reads OPENAI_API_KEY from the environment.
 const PARSE_MODEL = openai('gpt-4o-mini');
 
-// What the LLM returns — INTENT ONLY, never macros.
+// What the LLM returns — INTENT + PORTION SIZE, never calories/macros.
 const parsedSchema = z.object({
   items: z.array(z.object({
-    query:    z.string().describe('a concise, searchable food name, e.g. "egg", "banana", "greek yogurt"'),
-    quantity: z.number().positive().describe('how many servings/units the user ate; default 1 if unstated'),
+    query:    z.string().describe('a concise, generic, searchable food name, e.g. "egg", "banana", "greek yogurt", "white rice cooked" (drop brands/adjectives unless essential)'),
+    quantity: z.number().positive().describe('the COUNT of units eaten; default 1 if unstated ("a"/"an"/"some" → 1)'),
+    unit:     z.string().describe('short label for ONE unit: "egg", "slice", "cup", "g", "oz", or "serving"'),
+    grams:    z.number().positive().describe('best estimate of the TOTAL grams eaten for this item, using typical portion sizes — portion SIZE only, NEVER calories. e.g. 2 eggs ≈ 100, a banana ≈ 120, a cup of cooked rice ≈ 158'),
   })).max(15),
 });
+
+interface LlmItem { query: string; quantity: number; unit: string; grams: number }
 
 interface NormalizedProduct {
   product_name:     string;
@@ -69,23 +76,46 @@ interface NormalizedProduct {
 interface ParsedItem {
   query:    string;
   quantity: number;
+  unit?:    string;
+  grams?:   number;
   matched:  boolean;
-  product?: NormalizedProduct; // the top DB hit (real macros) when matched
+  product?: NormalizedProduct; // top DB hit, with serving rewritten to the portion
+}
+
+const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
+
+/** Build the serving label + grams-per-unit from the LLM's unit + per-unit grams.
+ *  serving_quantity is grams of ONE unit, so the client's `servings = quantity`
+ *  yields macros = density_100g × (gramsPerUnit/100) × quantity = the real portion. */
+function buildServing(unit: string, gramsPerUnit: number): { serving_size: string; serving_quantity: number } {
+  const g = Math.round(gramsPerUnit);
+  const u = (unit ?? '').trim().toLowerCase();
+  const weightLike = !u || u === 'g' || u === 'gram' || u === 'grams' || u === 'oz' || u === 'serving';
+  return { serving_size: weightLike ? `${g} g` : `1 ${u} (~${g} g)`, serving_quantity: g };
 }
 
 /** Ground one parsed item against the existing food-search endpoint (same
- *  ranking + plausibility + cache). Returns the top hit, or matched:false. */
-async function groundItem(query: string, quantity: number, origin: string): Promise<ParsedItem> {
+ *  ranking + plausibility + cache), then REWRITE the product's serving to the
+ *  estimated portion so the logged calories reflect the real amount eaten. */
+async function groundItem(item: LlmItem, origin: string): Promise<ParsedItem> {
+  const query    = item.query;
+  const quantity = item.quantity > 0 ? item.quantity : 1;
+  // Total grams the user ate; fall back to 100 g/unit if the model omitted it.
+  const totalGrams   = item.grams && item.grams > 0 ? clamp(item.grams, 1, 3000) : 100 * quantity;
+  const gramsPerUnit = clamp(totalGrams / quantity, 1, 3000);
+  const base = { query, quantity, unit: item.unit, grams: Math.round(totalGrams) };
   try {
     const res = await fetch(`${origin}/api/food/search?q=${encodeURIComponent(query)}`, {
       signal: AbortSignal.timeout(6000),
     });
-    if (!res.ok) return { query, quantity, matched: false };
+    if (!res.ok) return { ...base, matched: false };
     const data = await res.json() as { products?: NormalizedProduct[] };
     const top  = data.products?.[0];
-    return top ? { query, quantity, matched: true, product: top } : { query, quantity, matched: false };
+    if (!top) return { ...base, matched: false };
+    const serving = buildServing(item.unit ?? '', gramsPerUnit);
+    return { ...base, matched: true, product: { ...top, ...serving } };
   } catch {
-    return { query, quantity, matched: false };
+    return { ...base, matched: false };
   }
 }
 
@@ -104,27 +134,33 @@ export async function POST(req: Request): Promise<NextResponse> {
 
   // Cache identical phrases (the parse is deterministic enough; macros refresh
   // via the search cache underneath). Keyed on lowercased text.
-  const cacheKey = `foodparse:${text.toLowerCase()}`;
+  const cacheKey = `foodparse:v2:${text.toLowerCase()}`;
   try {
     const cached = await redis.get<{ items: ParsedItem[] }>(cacheKey);
     if (cached) return NextResponse.json({ ...cached, configured: true, cached: true });
   } catch { /* redis down — parse live */ }
 
-  // ── 1. LLM: free text → structured intent (no macros) ──────────────────────
-  let items: Array<{ query: string; quantity: number }>;
+  // ── 1. LLM: free text → structured intent + PORTION SIZE (never calories) ──
+  let items: LlmItem[];
   try {
     const { object } = await generateObject({
       model:  PARSE_MODEL,
       schema: parsedSchema,
       system:
-        'You extract individual foods and how many servings the user ate from a ' +
-        'short meal description. Return a concise searchable name per food and a ' +
-        'positive quantity (default 1 if unstated). Split combined items ("eggs ' +
-        'and toast" → two). Do NOT estimate calories or macros — only name and ' +
-        'count. Ignore non-food text.',
+        'You convert a short meal description into a structured list of foods with PORTION SIZES. ' +
+        'For each food return: query (a concise, generic, searchable name — drop brands/adjectives ' +
+        'unless essential), quantity (the count of units, default 1; "a"/"an"/"some" → 1), unit (a ' +
+        'short label for ONE unit: "egg", "slice", "cup", "g", "oz", "serving"), and grams (your best ' +
+        'estimate of the TOTAL grams eaten for this item). ' +
+        'Split combined foods ("eggs and toast" → two items). Use typical portion weights: 1 large egg ' +
+        '≈ 50 g, 1 medium banana ≈ 120 g, 1 slice bread ≈ 30 g, 1 cup cooked rice ≈ 158 g, 1 cup cooked ' +
+        'pasta ≈ 140 g, 1 chicken breast ≈ 170 g, 1 tbsp oil ≈ 14 g, 1 cup milk ≈ 244 g, 1 apple ≈ 180 g. ' +
+        'If the user states an explicit weight ("200 g pasta", "8 oz chicken"), use it (1 oz ≈ 28 g) with ' +
+        'unit "g" and quantity 1. NEVER output calories or macros — only names and portion sizes. ' +
+        'Ignore non-food text (greetings, feelings).',
       prompt: text,
       // Hard cap so a pathological input can't run up tokens.
-      maxOutputTokens: 500,
+      maxOutputTokens: 600,
     });
     items = object.items;
   } catch {
@@ -139,7 +175,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   // Derive origin from the request so the internal /api/food/search call hits
   // this same deployment (preview or prod), with NEXTAUTH_URL as a fallback.
   const origin = new URL(req.url).origin || process.env.NEXTAUTH_URL || '';
-  const grounded = await Promise.all(items.map(i => groundItem(i.query, i.quantity > 0 ? i.quantity : 1, origin)));
+  const grounded = await Promise.all(items.map(i => groundItem(i, origin)));
 
   const result = { items: grounded };
   // Cache only when at least one item matched (a total miss may be a transient

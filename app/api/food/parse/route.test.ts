@@ -51,18 +51,42 @@ afterEach(() => { vi.unstubAllGlobals(); delete process.env.OPENAI_API_KEY; });
 
 describe('POST /api/food/parse', () => {
   it('grounds matched items with DB macros, never the model', async () => {
-    genMock.mockResolvedValue({ object: { items: [{ query: 'egg', quantity: 2 }] } });
+    genMock.mockResolvedValue({ object: { items: [{ query: 'egg', quantity: 2, unit: 'egg', grams: 100 }] } });
     const res = await POST(req({ text: '2 eggs' }));
     const body = await res.json();
     expect(body.configured).toBe(true);
     expect(body.items).toHaveLength(1);
     expect(body.items[0]).toMatchObject({ query: 'egg', quantity: 2, matched: true });
-    // Macros are the DB's, not anything the model emitted (the model emits none).
+    // Macros (density) are the DB's, not anything the model emitted.
     expect(body.items[0].product.nutriments['energy-kcal_100g']).toBe(155);
   });
 
+  it('rewrites the serving to the estimated PORTION (the old 100g/unit bug fix)', async () => {
+    // 2 eggs ≈ 100 g total → 50 g per unit, so logging 2 servings = 100 g (real),
+    // NOT 200 g (the old flat-100g-per-unit behaviour).
+    genMock.mockResolvedValue({ object: { items: [{ query: 'egg', quantity: 2, unit: 'egg', grams: 100 }] } });
+    const body = await (await POST(req({ text: '2 eggs' }))).json();
+    expect(body.items[0].product.serving_quantity).toBe(50);
+    expect(body.items[0].product.serving_size).toBe('1 egg (~50 g)');
+    // density × (gramsPerUnit/100) × quantity = 155 × 0.5 × 2 = 155 kcal ≈ 2 eggs
+    const p = body.items[0].product;
+    const kcal = p.nutriments['energy-kcal_100g'] * (p.serving_quantity / 100) * body.items[0].quantity;
+    expect(Math.round(kcal)).toBe(155);
+  });
+
+  it('honors an explicit weight (200 g pasta → 200 g serving, qty 1)', async () => {
+    fetchMock.mockImplementationOnce((url: string) => {
+      void url;
+      return Promise.resolve({ ok: true, json: async () => ({ products: [{ product_name: 'Pasta, cooked', serving_size: '100g', serving_quantity: 100, source: 'usda', nutriments: { 'energy-kcal_100g': 158, proteins_100g: 6, carbohydrates_100g: 31, fat_100g: 1 } }] }) });
+    });
+    genMock.mockResolvedValue({ object: { items: [{ query: 'pasta cooked', quantity: 1, unit: 'g', grams: 200 }] } });
+    const body = await (await POST(req({ text: '200g pasta' }))).json();
+    expect(body.items[0].product.serving_quantity).toBe(200);
+    expect(body.items[0].product.serving_size).toBe('200 g');
+  });
+
   it('marks an item the DB can’t find as matched:false (never invents macros)', async () => {
-    genMock.mockResolvedValue({ object: { items: [{ query: 'unobtainium bar', quantity: 1 }] } });
+    genMock.mockResolvedValue({ object: { items: [{ query: 'unobtainium bar', quantity: 1, unit: 'bar', grams: 60 }] } });
     const res = await POST(req({ text: 'an unobtainium bar' }));
     const body = await res.json();
     expect(body.items[0]).toMatchObject({ matched: false });
@@ -71,8 +95,8 @@ describe('POST /api/food/parse', () => {
 
   it('handles a mixed meal — some matched, some not', async () => {
     genMock.mockResolvedValue({ object: { items: [
-      { query: 'egg', quantity: 2 },
-      { query: 'unobtainium', quantity: 1 },
+      { query: 'egg', quantity: 2, unit: 'egg', grams: 100 },
+      { query: 'unobtainium', quantity: 1, unit: 'bar', grams: 60 },
     ] } });
     const res = await POST(req({ text: '2 eggs and unobtainium' }));
     const body = await res.json();
@@ -99,7 +123,7 @@ describe('POST /api/food/parse', () => {
   });
 
   it('defaults a non-positive quantity to 1', async () => {
-    genMock.mockResolvedValue({ object: { items: [{ query: 'egg', quantity: 0 }] } });
+    genMock.mockResolvedValue({ object: { items: [{ query: 'egg', quantity: 0, unit: 'egg', grams: 50 }] } });
     const res = await POST(req({ text: 'egg' }));
     const body = await res.json();
     expect(body.items[0].quantity).toBe(1);

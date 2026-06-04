@@ -579,7 +579,7 @@ export function AddFoodModal({ open, onClose, onAdd }: {
   // server-side, so a parsed item carries a real OFFProduct + the parsed qty.
   const [nlText,    setNlText]    = useState('');
   const [nlParsing, setNlParsing] = useState(false);
-  const [nlItems,   setNlItems]   = useState<Array<{ query: string; quantity: number; matched: boolean; product?: OFFProduct }> | null>(null);
+  const [nlItems,   setNlItems]   = useState<Array<{ query: string; quantity: number; unit?: string; grams?: number; matched: boolean; product?: OFFProduct }> | null>(null);
   // Whether the Quick Log feature is available (server has an AI key). Probed
   // once on open via GET /api/food/parse so the tab's presence is correct from
   // the start — never shows a tab that would dead-end.
@@ -782,7 +782,7 @@ export function AddFoodModal({ open, onClose, onAdd }: {
       });
       const data = await res.json() as {
         configured?: boolean;
-        items?: Array<{ query: string; quantity: number; matched: boolean; product?: OFFProduct }>;
+        items?: Array<{ query: string; quantity: number; unit?: string; grams?: number; matched: boolean; product?: OFFProduct }>;
         error?: string;
       };
       if (data.configured === false) { setNlEnabled(false); setMode('search'); return; } // feature off → fall back to search
@@ -1015,7 +1015,9 @@ export function AddFoodModal({ open, onClose, onAdd }: {
                                 <p className="font-mono text-[11px] font-semibold text-[var(--ink-0)] truncate">
                                   {it.quantity > 1 ? `${it.quantity}× ` : ''}{it.product.product_name}
                                 </p>
-                                <p className="font-mono text-[8px] text-[var(--ink-3)]">tap to review &amp; add</p>
+                                <p className="font-mono text-[8px] text-[var(--ink-3)]">
+                                  {it.grams ? `~${it.grams} g · ` : ''}tap to review &amp; add
+                                </p>
                               </div>
                               <Plus size={15} className="text-[var(--accent)] flex-shrink-0" />
                             </button>
