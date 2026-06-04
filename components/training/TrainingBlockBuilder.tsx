@@ -127,8 +127,17 @@ export default function TrainingBlockBuilder() {
 
   useEffect(() => {
     const b = loadTrainingBlock();
-    if (b) { setBlock(b); setCollapsed(false); }
-  }, []);
+    if (b) {
+      setBlock(b);
+      setCollapsed(false);
+      // Open on the week you're actually in (not always Week 1), so the builder
+      // and the calendar's "today" line up.
+      const diff = Math.floor(
+        (Date.parse(todayStr + 'T00:00:00Z') - Date.parse(b.startDate + 'T00:00:00Z')) / 86_400_000,
+      );
+      if (diff >= 0 && diff < b.weeks * 7) setSelWeek(Math.floor(diff / 7));
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const persist = useCallback((b: TrainingBlock | null) => {
     setBlock(b);
@@ -182,7 +191,7 @@ export default function TrainingBlockBuilder() {
     if (diff < 0) return { state: 'upcoming' as const, startsInDays: -diff };
     if (diff >= block.weeks * 7) return { state: 'done' as const };
     const wkIdx = Math.floor(diff / 7);
-    return { state: 'live' as const, wkIdx, week: block.weeksData[wkIdx] };
+    return { state: 'live' as const, wkIdx, dow: (diff % 7) as DayOfWeek, week: block.weeksData[wkIdx] };
   }, [block, todayStr]);
 
   // ── New-block (empty) state ────────────────────────────────────────────────
@@ -444,11 +453,17 @@ export default function TrainingBlockBuilder() {
               {week.days.map(day => {
                 const brick = isBrickDay(day);
                 const rest = day.sessions.length === 0;
+                const isToday = planStatus?.state === 'live' && planStatus.wkIdx === selWeek && planStatus.dow === day.dow;
                 return (
-                  <div key={day.dow} className="rounded-lg border border-[var(--line-2)] bg-[var(--bg-2)] p-2.5">
+                  <div key={day.dow}
+                    className="rounded-lg border bg-[var(--bg-2)] p-2.5"
+                    style={isToday
+                      ? { borderColor: 'var(--accent)', boxShadow: '0 0 0 1px var(--accent), 0 0 14px var(--accent-24)' }
+                      : { borderColor: 'var(--line-2)' }}>
                     <div className="flex items-center justify-between mb-1.5">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-[11px] font-bold tracking-[1px] text-[var(--ink-1)] w-9">{DOW_LABEL[day.dow]}</span>
+                        <span className="font-mono text-[11px] font-bold tracking-[1px] w-9" style={{ color: isToday ? 'var(--accent)' : 'var(--ink-1)' }}>{DOW_LABEL[day.dow]}</span>
+                        {isToday && <span className="font-mono text-[8px] font-bold tracking-[0.5px] uppercase text-[var(--bg-0)] rounded px-1" style={{ background: 'var(--accent)' }}>Today</span>}
                         {brick && <span className="font-mono text-[8px] font-bold tracking-[0.5px] uppercase text-[#6DFF99] border border-[#6DFF99]/40 rounded px-1">Brick</span>}
                         {rest && <span className="flex items-center gap-1 font-mono text-[8px] font-bold tracking-[0.5px] uppercase text-[var(--ink-3)]"><Moon size={9} /> Rest</span>}
                       </div>
