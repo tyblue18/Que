@@ -27,6 +27,7 @@ import React, {
 import { queueSync, pushNow, flushPending, pullFromCloud, restoreSettings } from '@/lib/syncEngine';
 import { DB_KEY, PROFILE_KEY } from '@/lib/constants';
 import { mergeDays, stampEditedFields, type MergeableDay } from '@/lib/dayMerge';
+import { reclaimBadgeCacheQuota } from '@/components/AutoCropImage';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -397,6 +398,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // HYDRATION — runs once on mount (client only, never on SSR)
   // ─────────────────────────────────────────────────────────────────────────
   useEffect(() => {
+    // ── Reclaim badge-cache quota BEFORE any write ─────────────────────────
+    //    The legacy `queBadgeCropCache` grew to ~5 MB in the wild and exhausted
+    //    the per-origin localStorage quota, silently breaking every other write
+    //    (food logging, custom foods). Purge it eagerly on boot — removeItem
+    //    never throws on quota — so the first food add of the session succeeds.
+    reclaimBadgeCacheQuota();
+
     // ── Correct SSR timezone mismatch ─────────────────────────────────────
     //    The server runs UTC; the client has the user's actual local date.
     //    Re-derive today from the client clock and reset navigation state.

@@ -9,6 +9,7 @@ import {
 import type { FoodEntry } from '@/lib/AppContext';
 import { getRecent, getFrequent, forgetFood, type FoodUsageEntry } from '@/lib/foodUsage';
 import { trackEvent } from '@/lib/telemetry';
+import { reclaimBadgeCacheQuota } from '@/components/AutoCropImage';
 
 // ── Custom / My Foods ─────────────────────────────────────────────────────────
 
@@ -32,8 +33,17 @@ function loadMyFoods(): CustomFood[] {
   try { return JSON.parse(localStorage.getItem(MY_FOODS_KEY) ?? '[]'); }
   catch { return []; }
 }
-function saveMyFoods(foods: CustomFood[]) {
-  localStorage.setItem(MY_FOODS_KEY, JSON.stringify(foods));
+/** Persist custom foods. Returns false if the write ultimately failed (e.g.
+ *  localStorage quota exhausted). On a first failure we reclaim the badge-crop
+ *  cache — usually the biggest reclaimable consumer — and retry once, so a
+ *  full disk self-heals instead of silently dropping the save. */
+function saveMyFoods(foods: CustomFood[]): boolean {
+  const write = () => localStorage.setItem(MY_FOODS_KEY, JSON.stringify(foods));
+  try { write(); return true; }
+  catch {
+    try { reclaimBadgeCacheQuota(); write(); return true; }
+    catch { return false; }
+  }
 }
 
 // ── Meal section constants ────────────────────────────────────────────────────
@@ -302,7 +312,10 @@ function MyFoodsTab({ onSelect }: { onSelect: (p: OFFProduct) => void }) {
       };
       updated = [...myFoods, food];
     }
-    saveMyFoods(updated);
+    if (!saveMyFoods(updated)) {
+      setFormError('Storage is full — could not save. Free up space and try again.');
+      return;
+    }
     setMyFoods(updated);
     closeForm();
   };

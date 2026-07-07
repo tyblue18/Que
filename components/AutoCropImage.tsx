@@ -26,18 +26,51 @@ import { useState, useEffect, useRef } from 'react';
 // + trusted corner pixel). Bumped so users re-crop instead of serving the
 // over-cropped _v2 results (which ate the art on frame-filling badges).
 const CACHE_KEY      = 'queBadgeCropCache_v3';
-const CACHE_MAX      = 100;
+// Superseded cache versions used older crop algorithms and are never read
+// again — they're pure dead weight in localStorage. Legacy `queBadgeCropCache`
+// (v1) had NO real cap and grew to ~5 MB in the wild, exhausting the whole
+// ~5 MB per-origin quota and silently breaking every OTHER localStorage write
+// (food logging, custom foods). We purge these eagerly on app boot; see
+// reclaimBadgeCacheQuota().
+const LEGACY_CACHE_KEYS = ['queBadgeCropCache', 'queBadgeCropCache_v2'];
+// Bound the LIVE cache by BOTH count and serialized bytes. 100 × ~23 KB crops
+// was ~2.3 MB — still a large slice of the 5 MB budget. Cap at 60 entries AND
+// ~1 MB so the badge cache can never again crowd out the primary data.
+const CACHE_MAX       = 60;
+const CACHE_BYTES_MAX = 1_000_000;
 const memoryCache    = new Map<string, string>(); // src → dataUrl
 let   diskHydrated   = false;
 let   diskCache: Record<string, { dataUrl: string; t: number }> = {};
 
+/**
+ * Reclaim localStorage quota consumed by badge crop caches. Removes superseded
+ * cache versions outright and drops the live cache if it has grown past its
+ * byte budget (it rebuilds lazily, so this is lossless — just a re-crop). Uses
+ * only removeItem, which never throws on quota, so it is always safe to call —
+ * including as a last-ditch reclaim right before retrying a failed write.
+ *
+ * Called eagerly at app startup (AppContext) so it runs even when no badge is
+ * on screen — the old lazy-on-first-badge cleanup never fired for users who
+ * live on the Calendar/Calories tabs, leaving the legacy cache wedging quota.
+ */
+export function reclaimBadgeCacheQuota(): void {
+  if (typeof window === 'undefined') return;
+  for (const k of LEGACY_CACHE_KEYS) {
+    try { localStorage.removeItem(k); } catch { /* ignore */ }
+  }
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (raw && raw.length > CACHE_BYTES_MAX) {
+      localStorage.removeItem(CACHE_KEY);
+      diskCache = {};
+    }
+  } catch { /* ignore */ }
+}
+
 function hydrateDiskCache(): void {
   if (diskHydrated || typeof window === 'undefined') return;
   diskHydrated = true;
-  // Reclaim the quota from superseded cache versions — their crops used older
-  // algorithms and are never read again.
-  try { localStorage.removeItem('queBadgeCropCache'); } catch { /* ignore */ }
-  try { localStorage.removeItem('queBadgeCropCache_v2'); } catch { /* ignore */ }
+  reclaimBadgeCacheQuota();
   try {
     const raw = localStorage.getItem(CACHE_KEY);
     if (raw) diskCache = JSON.parse(raw);
@@ -50,13 +83,17 @@ function hydrateDiskCache(): void {
 function persistDiskCache(src: string, dataUrl: string): void {
   if (typeof window === 'undefined') return;
   diskCache[src] = { dataUrl, t: Date.now() };
-  // LRU evict oldest if over cap. Cheap because we do it only on miss-and-add.
-  const entries = Object.entries(diskCache);
-  if (entries.length > CACHE_MAX) {
-    entries.sort((a, b) => b[1].t - a[1].t);
-    diskCache = Object.fromEntries(entries.slice(0, CACHE_MAX));
+  // LRU evict oldest over the count cap, then trim further until the serialized
+  // blob fits the byte budget. Cheap because we do it only on miss-and-add.
+  let entries = Object.entries(diskCache).sort((a, b) => b[1].t - a[1].t);
+  if (entries.length > CACHE_MAX) entries = entries.slice(0, CACHE_MAX);
+  let serialized = JSON.stringify(Object.fromEntries(entries));
+  while (entries.length > 1 && serialized.length > CACHE_BYTES_MAX) {
+    entries = entries.slice(0, entries.length - 1);
+    serialized = JSON.stringify(Object.fromEntries(entries));
   }
-  try { localStorage.setItem(CACHE_KEY, JSON.stringify(diskCache)); }
+  diskCache = Object.fromEntries(entries);
+  try { localStorage.setItem(CACHE_KEY, serialized); }
   catch { /* quota — drop silently, in-memory cache still works */ }
 }
 
