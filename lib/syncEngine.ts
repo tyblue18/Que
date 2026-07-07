@@ -35,7 +35,7 @@ const DEBOUNCE_MS = 4_000;
 
 import {
   ATHLETE_PLAN_KEY, PLAN_HISTORY_KEY, WORKOUT_PRESETS_KEY, TEMPLATES_KEY, EXERCISE_USAGE_KEY,
-  CUSTOM_EXERCISES_KEY,
+  CUSTOM_EXERCISES_KEY, MY_FOODS_KEY,
   LAST_STREAK_KEY, LIFT_PRS_KEY, MILLION_GROUPS_KEY, MACRO_GOALS_KEY,
   COIN_KEY, PROFILE_PHOTO_KEY, UNITS_KEY, DB_KEY, PENDING_BADGE_POPUPS_KEY,
   LIFTING_PROGRAM_KEY, TRAINING_BLOCK_KEY,
@@ -74,6 +74,7 @@ const SETTINGS_KEYS = [
   TEMPLATES_KEY,           // custom templates
   EXERCISE_USAGE_KEY,      // exercise frequency (for sorting)
   CUSTOM_EXERCISES_KEY,    // user-added exercises + the muscles they hit
+  MY_FOODS_KEY,            // saved custom ingredients/meals + barcode-discovered foods
   LAST_STREAK_KEY,         // calorie streak
   LIFT_PRS_KEY,            // all-time lift maxes — read by badge engine server-side
   MILLION_GROUPS_KEY,      // muscle groups that have crossed 1,000,000 lbs lifetime volume

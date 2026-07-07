@@ -40,6 +40,7 @@ export const PLAN_HISTORY_KEY   = 'queAthletePlanHistory';
 export const WORKOUT_PRESETS_KEY = 'queWorkoutPresets';
 export const EXERCISE_USAGE_KEY  = 'queExerciseUsage';
 export const CUSTOM_EXERCISES_KEY = 'queCustomExercises'; // user-added exercises (name + secondary/tertiary muscles), per group
+export const MY_FOODS_KEY        = 'queMyFoods';       // user-saved custom ingredients/meals + barcode-discovered foods; synced via SETTINGS_KEYS
 
 // UI preferences
 export const UNITS_KEY         = 'queUnits';   // 'imperial' | 'metric' — display/input only; storage stays imperial
@@ -58,6 +59,7 @@ export const SHOWN_BADGES_KEY   = 'queShownBadgePopups';
 export const PENDING_BADGE_POPUPS_KEY = 'quePendingBadgePopups';
 export const WEIGHT_PROMPT_KEY  = 'queWeightPromptDate';   // legacy gate — cleaned up on load
 export const WEIGHT_SKIP_KEY    = 'queWeightSkipDate';     // epoch-ms timestamp of the last morning-prompt skip (drives a 5-min snooze)
+export const WEIGHT_DONE_KEY    = 'queWeightPromptDone';   // YYYY-MM-DD the morning prompt was completed/dismissed-for-the-day; suppresses re-asks until the next day
 export const SOCIAL_ANIM_KEY    = 'queSocialAnimIdx';
 export const COINS_MIGRATED_KEY = 'queCoinsMigrated';
 // Floating rest-timer state (device-local, NOT synced). Persisted so the bar

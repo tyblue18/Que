@@ -10,6 +10,8 @@ import type { FoodEntry } from '@/lib/AppContext';
 import { getRecent, getFrequent, forgetFood, type FoodUsageEntry } from '@/lib/foodUsage';
 import { trackEvent } from '@/lib/telemetry';
 import { reclaimBadgeCacheQuota } from '@/components/AutoCropImage';
+import { MY_FOODS_KEY } from '@/lib/constants';
+import { queueSync, gatherSettings } from '@/lib/syncEngine';
 
 // ── Custom / My Foods ─────────────────────────────────────────────────────────
 
@@ -25,8 +27,6 @@ export interface CustomFood {
   createdAt:   number;
   barcode?:    string;   // set when saved from a barcode scan
 }
-
-const MY_FOODS_KEY = 'queMyFoods';
 
 function loadMyFoods(): CustomFood[] {
   if (typeof window === 'undefined') return [];
@@ -316,6 +316,9 @@ function MyFoodsTab({ onSelect }: { onSelect: (p: OFFProduct) => void }) {
       setFormError('Storage is full — could not save. Free up space and try again.');
       return;
     }
+    // Back the saved food up to the cloud now (queMyFoods rides the settings
+    // snapshot) so it survives a storage clear / device switch.
+    queueSync({ settings: gatherSettings() });
     setMyFoods(updated);
     closeForm();
   };

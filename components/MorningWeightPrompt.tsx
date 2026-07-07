@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { X } from 'lucide-react';
 import { useApp } from '@/lib/AppContext';
-import { GOAL_TOLERANCE, WEIGHT_PROMPT_KEY, WEIGHT_SKIP_KEY } from '@/lib/constants';
+import { GOAL_TOLERANCE, WEIGHT_PROMPT_KEY, WEIGHT_SKIP_KEY, WEIGHT_DONE_KEY } from '@/lib/constants';
 import { computeBaseBudget, loadCoins } from '@/lib/calorie-utils';
 import { toDateStr } from '@/lib/metricsTypes';
 import { useUnits, kgToLb } from '@/lib/units';
@@ -64,8 +64,9 @@ export function MorningWeightPrompt() {
   tryShow.current = () => {
     const liveStr = toDateStr(new Date());
     if (localDB[liveStr]?.weight) return;                      // already weighed in today → done for the day
+    if (localStorage.getItem(WEIGHT_DONE_KEY) === liveStr) return; // completed or skipped-for-today → don't re-ask until tomorrow
     const skipAt = Number(localStorage.getItem(WEIGHT_SKIP_KEY));
-    if (Number.isFinite(skipAt) && Date.now() - skipAt < SKIP_COOLDOWN_MS) return; // recently skipped — still snoozing
+    if (Number.isFinite(skipAt) && Date.now() - skipAt < SKIP_COOLDOWN_MS) return; // recently snoozed via ✕ — still cooling down
     setNow(new Date()); // refresh recap/streak/greeting to the real current day
     const last = getLastKnownWeightRef.current(liveStr);
     if (last) setWeight(u.dispWeight(parseFloat(last))); // stored lb → display units
@@ -94,22 +95,32 @@ export function MorningWeightPrompt() {
     return () => document.removeEventListener('visibilitychange', onForeground);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const dismiss = (saveWeight: boolean) => {
+  // Three exit paths:
+  //   'start'  — the primary button. Stores the weight if one was entered, then
+  //              marks the prompt DONE for today so it never re-asks until the
+  //              next calendar day. This is the fix for "I started my day but it
+  //              asked again": engaging with the prompt closes it out for the day
+  //              whether or not a weight was typed.
+  //   'today'  — "Skip for today". No weight stored, but still DONE for today.
+  //   'snooze' — the corner ✕. A soft "not now" that re-asks on the next app
+  //              open after a short cooldown (the only path that re-prompts).
+  const dismiss = (mode: 'start' | 'today' | 'snooze') => {
     const liveStr  = toDateStr(new Date());
-    const didEnter = saveWeight && weight && parseFloat(weight) > 0;
+    const didEnter = mode === 'start' && weight && parseFloat(weight) > 0;
     if (didEnter) {
       // Convert the entered display value to canonical lb for storage.
       const wStored = u.isMetric ? kgToLb(parseFloat(weight)).toFixed(1) : weight;
       updateDayRecord(liveStr, { weight: wStored });
       persistProfile({ weight: wStored });
-      // Logging weight makes localDB[liveStr].weight truthy, which suppresses the
-      // prompt for the rest of the day.
-    } else {
-      // Skip / close: snooze for SKIP_COOLDOWN_MS so a quick app-switch / resume
-      // doesn't re-pop it. Stored as an epoch-ms timestamp so it self-expires (and an
-      // old date-string value from a prior version parses to NaN and is ignored).
-      // After the cooldown the prompt returns on the next open until a weight is logged.
+    }
+    if (mode === 'snooze') {
+      // Stored as an epoch-ms timestamp so it self-expires (and an old date-string
+      // value from a prior version parses to NaN and is ignored).
       localStorage.setItem(WEIGHT_SKIP_KEY, String(Date.now()));
+    } else {
+      // 'start' or 'today' → done for this calendar day; clear any stale snooze.
+      localStorage.setItem(WEIGHT_DONE_KEY, liveStr);
+      localStorage.removeItem(WEIGHT_SKIP_KEY);
     }
     setOpen(false);
   };
@@ -186,9 +197,9 @@ export function MorningWeightPrompt() {
               style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
             >
               <button
-                onClick={() => dismiss(false)}
+                onClick={() => dismiss('snooze')}
                 className="absolute top-4 right-4 p-1.5 rounded-lg text-[var(--ink-3)] hover:text-[var(--ink-1)] hover:bg-[var(--bg-3)] transition-colors"
-                aria-label="Close"
+                aria-label="Dismiss for now"
               >
                 <X size={14} />
               </button>
@@ -332,8 +343,8 @@ export function MorningWeightPrompt() {
                   value={weight}
                   onChange={e => setWeight(e.target.value)}
                   onKeyDown={e => {
-                    if (e.key === 'Enter')  dismiss(true);
-                    if (e.key === 'Escape') dismiss(false);
+                    if (e.key === 'Enter')  dismiss('start');
+                    if (e.key === 'Escape') dismiss('snooze');
                   }}
                   placeholder={u.isMetric ? 'e.g. 82' : 'e.g. 180'}
                 />
@@ -342,14 +353,14 @@ export function MorningWeightPrompt() {
               {/* ── Actions ── */}
               <div className="flex gap-2 pt-1">
                 <button
-                  onClick={() => dismiss(false)}
+                  onClick={() => dismiss('today')}
                   className="flex-1 py-3 rounded-lg font-mono text-[10px] font-bold tracking-[1px] uppercase text-[var(--ink-3)]"
                   style={{ background: 'var(--bg-3)', border: '1px solid rgba(255,255,255,0.07)' }}
                 >
-                  Skip
+                  Skip for today
                 </button>
                 <button
-                  onClick={() => dismiss(true)}
+                  onClick={() => dismiss('start')}
                   className="flex-[2] py-3 rounded-lg font-mono text-[10px] font-bold tracking-[1px] uppercase"
                   style={{
                     background: 'var(--accent)',

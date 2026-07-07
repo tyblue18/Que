@@ -524,16 +524,30 @@ export default function CalorieTracker() {
       ...(liveMetrics.tdee > 0 && { tdee: liveMetrics.tdee }),
       ...(todayWeight && parseFloat(todayWeight) > 0 && { weight: todayWeight }),
     });
-    // Celebrate exactly when a coin is earned — same plan-aware goal as the coin
-    // engine (under maintenance on a cut, over on a bulk, ±100 with no plan).
+    // Award the calorie coin here — on this DELIBERATE "Log Today" commit — not
+    // in a real-time effect that re-fires on every tab open. The popup rides the
+    // award (setPendingCoin), and the awardedDates guard makes it fire at most
+    // once per day. Same plan-aware goal as the coin engine (under maintenance on
+    // a cut, over on a bulk, ±100 with no plan).
     const hitGoalFlag = isGoalDay(totals.kcal, liveMetrics.budget || baseBudget, liveMaintenance, planDir);
     if (hitGoalFlag) {
       navigator.vibrate?.([50, 30, 80]);
-      setCelebrateVisible(true);
+      const coins = loadCoins();
+      if (activeDayFocus === todayStr && !coins.awardedDates.includes(todayStr)) {
+        const earned  = coinsForStreak(streakEndingAt(localDB, todayStr, baseBudget, planDir) || 1);
+        const newData = { total: coins.total + earned, awardedDates: [...coins.awardedDates, todayStr] };
+        saveCoins(newData);
+        setCoinData(newData);
+        setPendingCoin({ date: todayStr, label: 'today', amount: earned });
+      } else {
+        // Already earned today (or logging a past day) — celebrate without
+        // re-awarding, so the coin never double-pops.
+        setCelebrateVisible(true);
+      }
     } else {
       setProjVisible(true);
     }
-  }, [activeDayFocus, liveMetrics, baseBudget, todayWeight, totals.kcal, updateDayRecord, planDir, liveMaintenance]);
+  }, [activeDayFocus, liveMetrics, baseBudget, todayWeight, totals.kcal, updateDayRecord, planDir, liveMaintenance, todayStr, localDB]);
 
   // On mount: scan past days for unawarded coins (only days before today).
   // Skip coin logic entirely when browsing a day other than today.
@@ -570,48 +584,12 @@ export default function CalorieTracker() {
     }
   }, [todayStr]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Award today's coin in real-time when goal is first hit; revoke if goal is no longer met.
-  // Skip when browsing a day other than today — coins only apply to the current day.
-  const todayCoinAwardedRef = useRef(false);
-  const todayCoinEarnedRef  = useRef(0);
-  useEffect(() => {
-    if (activeDayFocus !== todayStr) return;
-    if (!todayGoalHit) {
-      // Revoke only if we awarded during this session (earned > 0 means we touched it)
-      if (todayCoinAwardedRef.current && todayCoinEarnedRef.current > 0) {
-        const coins = loadCoins();
-        if (coins.awardedDates.includes(todayStr)) {
-          const newData = {
-            total: Math.max(0, coins.total - todayCoinEarnedRef.current),
-            awardedDates: coins.awardedDates.filter(d => d !== todayStr),
-          };
-          saveCoins(newData);
-          setCoinData(newData);
-        }
-      }
-      todayCoinAwardedRef.current = false;
-      todayCoinEarnedRef.current  = 0;
-      return;
-    }
-    if (todayCoinAwardedRef.current) return;
-    const coins = loadCoins();
-    if (coins.awardedDates.includes(todayStr)) {
-      // Already awarded in a prior session — mark ref so we don't double-award,
-      // but leave earned=0 so a subsequent miss doesn't revoke that prior award.
-      todayCoinAwardedRef.current = true;
-      return;
-    }
-    todayCoinAwardedRef.current = true;
-    const todayStreak = streakEndingAt(localDB, todayStr, baseBudget, planDir);
-    const earned      = coinsForStreak(todayStreak || 1);
-    todayCoinEarnedRef.current = earned;
-    const newTotal    = coins.total + earned;
-    const newData     = { total: newTotal, awardedDates: [...coins.awardedDates, todayStr] };
-    saveCoins(newData);
-    setCoinData(newData);
-    navigator.vibrate?.([40, 20, 80]);
-    setPendingCoin({ date: todayStr, label: 'today', amount: earned });
-  }, [todayGoalHit, todayStr]); // eslint-disable-line react-hooks/exhaustive-deps
+  // NOTE: today's coin is awarded on the deliberate "Log Today" press
+  // (handleLogToday), NOT in a real-time effect. The old effect here re-ran on
+  // every tab mount and re-popped the coin modal on each open; tying the award
+  // to the explicit commit makes the popup fire exactly once. Days the user
+  // never commits are picked up retroactively by the past-days scan above,
+  // which shows the "yesterday" popup on the next day.
 
   const collectCoin = useCallback(() => {
     setPendingCoin(null);
