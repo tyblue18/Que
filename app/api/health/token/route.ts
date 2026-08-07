@@ -1,10 +1,11 @@
 /**
  * GET /api/health/token
  *
- * Returns the authenticated user's personal step-sync API token,
- * generating and persisting one if it doesn't yet exist.
+ * Returns the authenticated user's personal health-sync API token,
+ * generating and persisting one if it doesn't yet exist. The same token
+ * authenticates both the step push and the cardio-activity push.
  *
- * Response: { token: string, endpoint: string }
+ * Response: { token, endpoint (steps), activityEndpoint (cardio) }
  */
 
 import { getServerSession } from 'next-auth/next';
@@ -38,5 +39,9 @@ export async function GET(): Promise<NextResponse> {
   }
 
   const base = process.env.NEXTAUTH_URL ?? '';
-  return NextResponse.json({ token, endpoint: `${base}/api/health/steps` });
+  return NextResponse.json({
+    token,
+    endpoint:         `${base}/api/health/steps`,
+    activityEndpoint: `${base}/api/health/activity`,
+  });
 }

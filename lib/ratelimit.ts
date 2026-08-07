@@ -38,6 +38,15 @@ export const stepLimit = new Ratelimit({
   prefix:  'rl:step',
 });
 
+// 20 token-based cardio activity pushes per IP per minute. Same class as the step
+// push (external automation with the personal token) — its own bucket so a burst
+// of activity syncs doesn't starve step syncs and vice-versa.
+export const activityLimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(20, '1 m'),
+  prefix:  'rl:activity',
+});
+
 // 30 Sentry tunnel envelopes per IP per minute. Errors are rare in normal use
 // (and the client SDK dedupes), so this is plenty — it exists to stop forged
 // envelopes from flooding (and exhausting) the Sentry project quota.

@@ -192,3 +192,19 @@ export const feedbackSchema = z.object({
 export const foodParseSchema = z.object({
   text: z.string().trim().min(1).max(300),
 });
+
+// ── /api/health/activity POST (auto cardio import from the user's own device) ──
+// Pushed by an iOS Shortcut / "Auto Health Export" / Tasker with the personal
+// step-sync token. distance/time bounds double as outlier guards (a fat-fingered
+// automation shouldn't be able to write a 5,000-mile run). time is in MINUTES.
+export const healthActivitySchema = z.object({
+  type:       z.enum(['run', 'bike', 'swim']),
+  distance:   z.number().nonnegative().max(1000).optional(), // in `unit`; required for run/bike
+  unit:       z.enum(['mi', 'km']).optional(),               // default mi (handled in route)
+  time:       z.number().positive().max(6000),               // minutes (≤100h)
+  date:       dateString.optional(),                         // defaults to user's local today
+  externalId: z.string().min(1).max(128).optional(),         // stable workout id → idempotent re-sends
+}).refine(
+  d => d.type === 'swim' || (typeof d.distance === 'number' && d.distance > 0),
+  { message: 'distance is required for run and bike', path: ['distance'] },
+);

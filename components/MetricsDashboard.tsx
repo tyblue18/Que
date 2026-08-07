@@ -43,6 +43,19 @@ import LiftingPlanBuilder from '@/components/lifting/LiftingPlanBuilder';
 // SUB-COMPONENT — StepSyncPanel
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Drop in your published iCloud Shortcut link here (in Shortcuts: share the
+// shortcut → Copy iCloud Link) to turn the iOS setup into one tap. While empty,
+// the iOS tab shows the manual "build a Shortcut" steps instead — no broken link.
+const IOS_SHORTCUT_URL: string = '';
+
+// The importable request. HTTP Shortcuts (Android) reads this via "Import from
+// cURL"; on iOS it's the reference for a "Get Contents of URL" action. distance
+// and time are placeholders the user wires to their workout (or a prompt).
+const ACTIVITY_BODY = '{"type":"run","distance":0,"unit":"mi","time":0}';
+const STEPS_BODY    = '{"steps":0}';
+const buildCurl = (endpoint: string, token: string, body: string) =>
+  `curl -X POST '${endpoint}' \\\n  -H 'Authorization: Bearer ${token}' \\\n  -H 'Content-Type: application/json' \\\n  -d '${body}'`;
+
 function StepSyncPanel() {
   const { updateDayRecord, todayStr, localDB } = useApp();
 
@@ -60,6 +73,46 @@ function StepSyncPanel() {
     if (!Number.isFinite(n) || n < 0) return;
     updateDayRecord(todayStr, { steps: n });
   }, [manualSteps, todayStr, updateDayRecord]);
+
+  // ── Auto-sync setup (personal token + endpoints) ──────────────────────────
+  // Collapsed by default; the token is fetched lazily on first expand so we
+  // never issue one for users who don't use it. Same token drives steps AND
+  // cardio — an iOS Shortcut / "Auto Health Export" / Tasker POSTs each finished
+  // run/bike/swim so distance, time (and therefore calories) fill in with no
+  // manual entry. It's the user's OWN data, so it feeds battles/groups too.
+  const [showSync, setShowSync] = useState(false);
+  const [sync, setSync] = useState<{ token: string; activityEndpoint: string; stepsEndpoint: string } | null>(null);
+  const [syncErr, setSyncErr] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+  const [platform, setPlatform] = useState<'android' | 'ios'>(() =>
+    typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent) ? 'ios' : 'android');
+  // Which feed the setup command targets — workouts (cardio) or the daily step total.
+  const [dataType, setDataType] = useState<'activity' | 'steps'>('activity');
+
+  const toggleSync = useCallback(() => {
+    setShowSync(v => !v);
+    if (sync) return;
+    fetch('/api/health/token')
+      .then(r => (r.ok ? r.json() : Promise.reject()))
+      .then((d: { token: string; endpoint: string; activityEndpoint?: string }) =>
+        setSync({
+          token:            d.token,
+          stepsEndpoint:    d.endpoint,
+          activityEndpoint: d.activityEndpoint ?? `${d.endpoint.replace(/\/steps$/, '')}/activity`,
+        }))
+      .catch(() => setSyncErr(true));
+  }, [sync]);
+
+  const copy = useCallback((text: string, which: string) => {
+    navigator.clipboard?.writeText(text)
+      .then(() => { setCopied(which); setTimeout(() => setCopied(null), 1500); })
+      .catch(() => {});
+  }, []);
+
+  // The endpoint + cURL for the currently selected feed.
+  const isSteps     = dataType === 'steps';
+  const curEndpoint = sync ? (isSteps ? sync.stepsEndpoint : sync.activityEndpoint) : '';
+  const curCurl     = sync ? buildCurl(curEndpoint, sync.token, isSteps ? STEPS_BODY : ACTIVITY_BODY) : '';
 
   return (
     <div className="mt-4 pt-4 border-t border-[var(--line)]">
@@ -87,6 +140,132 @@ function StepSyncPanel() {
         <p className="font-mono text-[8px] text-[var(--ink-3)] mt-1 tracking-[0.3px]">
           Read it off your phone&apos;s health app — saves to today and syncs to your other devices.
         </p>
+
+        {/* Auto-sync disclosure */}
+        <button
+          type="button"
+          onClick={toggleSync}
+          className="mt-3 w-full flex items-center justify-between font-mono text-[9px] font-bold tracking-[1px] uppercase text-[var(--accent)]"
+        >
+          <span>Auto-sync from your watch</span>
+          <span className="text-[var(--ink-3)]">{showSync ? '–' : '+'}</span>
+        </button>
+
+        {showSync && (
+          <div className="mt-2 space-y-2 border-t border-[var(--line)] pt-2">
+            <p className="font-mono text-[9px] text-[var(--ink-2)] leading-relaxed tracking-[0.2px]">
+              Push finished workouts (and your daily steps) from your phone automatically — no manual entry, calories included. Pick your phone &amp; what to sync:
+            </p>
+
+            {syncErr ? (
+              <p className="font-mono text-[9px] text-[var(--warn)]">Couldn&apos;t load your token — check your connection and reopen.</p>
+            ) : !sync ? (
+              <p className="font-mono text-[9px] text-[var(--ink-3)] animate-pulse">Loading your token…</p>
+            ) : (
+              <>
+                {/* Platform tabs */}
+                <div className="flex bg-[var(--bg-3)] rounded-sm p-0.5 gap-0.5">
+                  {(['android', 'ios'] as const).map(p => (
+                    <button
+                      key={p} type="button" onClick={() => setPlatform(p)}
+                      className={[
+                        'flex-1 py-1.5 rounded-sm font-mono text-[9px] font-bold uppercase tracking-[1px] transition-all',
+                        platform === p ? 'bg-[var(--accent)] text-[var(--accent-ink)]' : 'text-[var(--ink-3)] hover:text-[var(--ink-1)]',
+                      ].join(' ')}
+                    >
+                      {p === 'android' ? 'Android' : 'iPhone'}
+                    </button>
+                  ))}
+                </div>
+
+                {/* What to sync */}
+                <div className="flex bg-[var(--bg-3)] rounded-sm p-0.5 gap-0.5">
+                  {([['activity', 'Workouts'], ['steps', 'Steps']] as const).map(([v, label]) => (
+                    <button
+                      key={v} type="button" onClick={() => setDataType(v)}
+                      className={[
+                        'flex-1 py-1.5 rounded-sm font-mono text-[9px] font-bold uppercase tracking-[1px] transition-all',
+                        dataType === v ? 'bg-[var(--accent-12)] text-[var(--accent)]' : 'text-[var(--ink-3)] hover:text-[var(--ink-1)]',
+                      ].join(' ')}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {platform === 'android' ? (
+                  <div className="space-y-2">
+                    <ol className="font-mono text-[9px] text-[var(--ink-2)] leading-relaxed space-y-1 list-decimal pl-3.5">
+                      <li>Install <span className="text-[var(--ink-0)]">HTTP Shortcuts</span> (free, Play Store).</li>
+                      <li>In it: <span className="text-[var(--ink-0)]">＋ → Import from cURL</span> → paste the command below → Save.</li>
+                      <li>{isSteps ? 'Run it once a day — schedule it in the app (steps are a daily total).' : 'Tap it after a workout, or trigger from Tasker + Health Connect for hands-free sync.'}</li>
+                    </ol>
+                    <button
+                      type="button"
+                      onClick={() => copy(curCurl, 'curl')}
+                      className="que-btn-primary w-full py-2.5 text-[10px]"
+                    >
+                      {copied === 'curl' ? 'Copied ✓' : 'Copy setup command'}
+                    </button>
+                  </div>
+                ) : IOS_SHORTCUT_URL ? (
+                  <div className="space-y-2">
+                    <ol className="font-mono text-[9px] text-[var(--ink-2)] leading-relaxed space-y-1 list-decimal pl-3.5">
+                      <li>Tap <span className="text-[var(--ink-0)]">Add Shortcut</span> and add it to your library.</li>
+                      <li>Run it once — paste your token when it asks (copy it below).</li>
+                      <li>{isSteps ? 'It runs on a daily time automation.' : 'It fires from a “When a Workout ends” automation.'}</li>
+                    </ol>
+                    <a
+                      href={IOS_SHORTCUT_URL} target="_blank" rel="noopener noreferrer"
+                      className="que-btn-primary w-full py-2.5 text-[10px] text-center block"
+                    >
+                      Add Shortcut
+                    </a>
+                    <button type="button" onClick={() => copy(sync.token, 'token')} className="que-btn-ghost w-full py-2 text-[9px]">
+                      {copied === 'token' ? 'Token copied ✓' : 'Copy token'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <ol className="font-mono text-[9px] text-[var(--ink-2)] leading-relaxed space-y-1 list-decimal pl-3.5">
+                      <li>Shortcuts app → new Shortcut → add <span className="text-[var(--ink-0)]">Get Contents of URL</span>.</li>
+                      <li>Method <span className="text-[var(--ink-0)]">POST</span>, header <span className="text-[var(--ink-0)]">Authorization: Bearer &lt;token&gt;</span>, JSON body.</li>
+                      <li>{isSteps ? 'Run it from a daily time automation.' : 'Run it from a “When a Workout ends” automation.'} (“Copy request” below has it all.)</li>
+                    </ol>
+                    <button
+                      type="button"
+                      onClick={() => copy(curCurl, 'curl')}
+                      className="que-btn-primary w-full py-2.5 text-[10px]"
+                    >
+                      {copied === 'curl' ? 'Copied ✓' : 'Copy request (cURL)'}
+                    </button>
+                  </div>
+                )}
+
+                {/* Raw values — copyable on either platform */}
+                <div className="space-y-1.5 border-t border-[var(--line)] pt-2">
+                  <div className="flex gap-1.5">
+                    <code className="flex-1 min-w-0 truncate font-mono text-[9px] text-[var(--ink-1)] bg-[var(--bg-3)] rounded px-2 py-1.5">{curEndpoint}</code>
+                    <button type="button" onClick={() => copy(curEndpoint, 'url')} className="que-btn-ghost px-2 flex-shrink-0 text-[8px]">{copied === 'url' ? '✓' : 'URL'}</button>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <code className="flex-1 min-w-0 truncate font-mono text-[9px] text-[var(--ink-1)] bg-[var(--bg-3)] rounded px-2 py-1.5">{sync.token}</code>
+                    <button type="button" onClick={() => copy(sync.token, 'token')} className="que-btn-ghost px-2 flex-shrink-0 text-[8px]">{copied === 'token' ? '✓' : 'Token'}</button>
+                  </div>
+                </div>
+
+                <p className="font-mono text-[8px] text-[var(--ink-3)] leading-relaxed tracking-[0.3px]">
+                  {isSteps ? (
+                    <><span className="text-[var(--ink-2)]">steps</span> = your day&apos;s running total (it overwrites, not adds) · optional <span className="text-[var(--ink-2)]">date</span> YYYY-MM-DD.</>
+                  ) : (
+                    <><span className="text-[var(--ink-2)]">type</span> run · bike · swim · <span className="text-[var(--ink-2)]">time</span> in minutes · <span className="text-[var(--ink-2)]">unit</span> mi or km · unique <span className="text-[var(--ink-2)]">externalId</span> so a re-sync never double-counts.</>
+                  )}{' '}
+                  Keep your token private — anyone with it can write to your log.
+                </p>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
