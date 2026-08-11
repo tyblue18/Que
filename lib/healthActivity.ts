@@ -78,35 +78,48 @@ export function applyActivity(
   const ids = Array.isArray(existing._importedActivityIds)
     ? (existing._importedActivityIds as string[])
     : [];
+  // Per-activity active-calorie ledger, keyed by externalId. Keeping it per
+  // activity (not just a running sum) is what lets a RE-SEND backfill/correct
+  // calories for an already-imported workout without double-counting its
+  // distance/time — the day total is always the sum of the ledger.
+  const kcalById: Record<string, number> = { ...((existing._garminKcalById as Record<string, number>) ?? {}) };
 
-  // Already imported this exact workout → no-op (idempotent re-send).
-  if (act.externalId && ids.includes(act.externalId)) {
-    return { data: existing, changed: false };
-  }
-
+  const alreadyImported = !!(act.externalId && ids.includes(act.externalId));
   const { dist: distKey, time: timeKey } = FIELD_MAP[act.type];
   const data: MergeableDay = { ...existing };
-  const touched: string[] = [timeKey];
+  const touched: string[] = [];
+  let changed = false;
 
-  data[timeKey] = +(num(existing[timeKey]) + act.timeMin).toFixed(1);
-  // Only write a distance field when there's a distance (swim often has none).
-  if (act.distanceMi > 0) {
-    data[distKey] = +(num(existing[distKey]) + act.distanceMi).toFixed(2);
-    touched.push(distKey);
+  // Distance + time: accumulate ONCE per activity (idempotent on re-send).
+  if (!alreadyImported) {
+    data[timeKey] = +(num(existing[timeKey]) + act.timeMin).toFixed(1);
+    touched.push(timeKey);
+    if (act.distanceMi > 0) {
+      data[distKey] = +(num(existing[distKey]) + act.distanceMi).toFixed(2);
+      touched.push(distKey);
+    }
+    if (act.externalId) data._importedActivityIds = [...ids, act.externalId];
+    changed = true;
   }
 
-  // Measured active calories (Garmin HR/power). Accumulate across the day, and
-  // set `burn` so the persisted value the badge/battle/metrics layers read is
-  // the measured number — not the distance/time estimate. The client budget
-  // reads garminKcal too (via CardioFields) so the live figure matches.
-  if (act.calories && act.calories > 0) {
-    const total = Math.round(num(existing.garminKcal) + act.calories);
-    data.garminKcal = total;
-    data.burn = total;
-    touched.push('garminKcal', 'burn');
+  // Measured active calories (Garmin HR/power). Recorded per activity, so a
+  // re-send updates this workout's value — enabling backfill — and `garminKcal`
+  // + `burn` are recomputed as the ledger sum. burn is what the badge/battle/
+  // metrics layers read; the client budget reads garminKcal (via CardioFields).
+  if (act.externalId && typeof act.calories === 'number' && act.calories > 0) {
+    const kcal = Math.round(act.calories);
+    if (kcalById[act.externalId] !== kcal) {
+      kcalById[act.externalId] = kcal;
+      const total = Object.values(kcalById).reduce((s, v) => s + v, 0);
+      data._garminKcalById = kcalById;
+      data.garminKcal = total;
+      data.burn = total;
+      touched.push('garminKcal', 'burn');
+      changed = true;
+    }
   }
 
-  if (act.externalId) data._importedActivityIds = [...ids, act.externalId];
+  if (!changed) return { data: existing, changed: false };
 
   data._fieldEditedAt = stampEditedFields(existing, touched, nowIso);
   data._editedAt = nowIso;

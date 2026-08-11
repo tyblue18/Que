@@ -97,6 +97,25 @@ describe('applyActivity — measured calories', () => {
     expect(data.garminKcal).toBeUndefined();
     expect(data.burn).toBeUndefined();
   });
+
+  it('BACKFILLS calories on re-send without double-counting distance/time', () => {
+    // First import carried no calories (pre-fix behaviour).
+    const first = applyActivity({}, { type: 'bike', distanceMi: 20, timeMin: 60, externalId: 'x' }, NOW).data;
+    expect(first.garminKcal).toBeUndefined();
+    expect(first.bikeDist).toBe(20);
+
+    // Re-send the SAME activity, now WITH calories → backfill.
+    const res = applyActivity(first, { type: 'bike', distanceMi: 20, timeMin: 60, calories: 465, externalId: 'x' }, NOW);
+    expect(res.changed).toBe(true);
+    expect(res.data.garminKcal).toBe(465);
+    expect(res.data.burn).toBe(465);
+    expect(res.data.bikeDist).toBe(20);   // NOT doubled
+    expect(res.data.bikeTime).toBe(60);
+
+    // Re-send again, identical → true no-op.
+    const again = applyActivity(res.data, { type: 'bike', distanceMi: 20, timeMin: 60, calories: 465, externalId: 'x' }, NOW);
+    expect(again.changed).toBe(false);
+  });
 });
 
 describe('applyActivity — merge safety', () => {
