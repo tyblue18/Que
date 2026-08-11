@@ -31,6 +31,10 @@ export function fmt(n: number): string { return Math.round(n).toLocaleString(); 
 export interface CardioFields {
   steps: string; runDist: string; runTime: string;
   bikeDist: string; bikeTime: string; swimTime: string;
+  /** Measured ACTIVE calories from a linked Garmin sync (sum across the day's
+   *  cardio). When > 0 it supersedes the distance/time estimate — Garmin's HR/
+   *  power number captures grade, wind, and effort the estimate can't. */
+  garminKcal?: string;
 }
 export const EMPTY_CARDIO: CardioFields = {
   steps: '0', runDist: '0', runTime: '0',
@@ -464,14 +468,32 @@ export function computeCardioBurn(profile: UserProfile, cardio: CardioFields): C
   }
 
   const sMin     = parseNum(cardio.swimTime);
-  const swimBurn = sMin > 0 ? netOf(7.0 * 3.5 * kg / 200 * sMin, sMin) : 0;
+  let   swimBurn = sMin > 0 ? netOf(7.0 * 3.5 * kg / 200 * sMin, sMin) : 0;
+
+  // Measured override: a linked Garmin sync provides real ACTIVE calories (HR/
+  // power based), which capture grade, wind, and effort the distance-time
+  // estimate can't — this is the fix for cycling numbers reading low. Garmin
+  // "active" kcal are already net of resting, so use them directly, and scale
+  // the per-type breakdown to the measured total so the split still sums.
+  const gKcal  = parseNum(cardio.garminKcal);
+  const estSum = runBurn + bikeBurn + swimBurn;
+  let activityBurn = Math.round(estSum);
+  if (gKcal > 0) {
+    activityBurn = Math.round(gKcal);
+    if (estSum > 0) {
+      const scale = gKcal / estSum;
+      runBurn  = Math.round(runBurn  * scale);
+      bikeBurn = Math.round(bikeBurn * scale);
+      swimBurn = Math.round(swimBurn * scale);
+    }
+  }
 
   return {
     stepMiles, stepBurn,
     runBurn, runPaceStr, runSpeed: Math.round(runSpeed * 10) / 10,
     bikeBurn, bikeSpeed: Math.round(bikeSpeed * 10) / 10,
     swimBurn,
-    activityBurn: Math.round(runBurn + bikeBurn + swimBurn),
+    activityBurn,
   };
 }
 

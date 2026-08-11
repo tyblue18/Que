@@ -26,6 +26,9 @@ export interface NormalizedActivity {
   distanceMi: number;
   /** Duration in MINUTES. */
   timeMin:    number;
+  /** Measured ACTIVE calories from the device (already net of resting), if the
+   *  source provides them (e.g. Garmin, HR/power based). Supersedes the estimate. */
+  calories?:  number;
   /** Stable id of the source workout; makes re-sends idempotent. */
   externalId?: string;
 }
@@ -90,6 +93,17 @@ export function applyActivity(
   if (act.distanceMi > 0) {
     data[distKey] = +(num(existing[distKey]) + act.distanceMi).toFixed(2);
     touched.push(distKey);
+  }
+
+  // Measured active calories (Garmin HR/power). Accumulate across the day, and
+  // set `burn` so the persisted value the badge/battle/metrics layers read is
+  // the measured number — not the distance/time estimate. The client budget
+  // reads garminKcal too (via CardioFields) so the live figure matches.
+  if (act.calories && act.calories > 0) {
+    const total = Math.round(num(existing.garminKcal) + act.calories);
+    data.garminKcal = total;
+    data.burn = total;
+    touched.push('garminKcal', 'burn');
   }
 
   if (act.externalId) data._importedActivityIds = [...ids, act.externalId];

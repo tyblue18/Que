@@ -82,6 +82,23 @@ describe('applyActivity — idempotency', () => {
   });
 });
 
+describe('applyActivity — measured calories', () => {
+  it('accumulates active calories into garminKcal and sets the persisted burn', () => {
+    const first = applyActivity({}, { type: 'bike', distanceMi: 10, timeMin: 40, calories: 465, externalId: 'a' }, NOW).data;
+    expect(first.garminKcal).toBe(465);
+    expect(first.burn).toBe(465);
+    const second = applyActivity(first, { type: 'run', distanceMi: 3, timeMin: 25, calories: 300, externalId: 'b' }, NOW).data;
+    expect(second.garminKcal).toBe(765);
+    expect(second.burn).toBe(765);
+  });
+
+  it('omits garminKcal/burn when no calories are provided (estimate path)', () => {
+    const { data } = applyActivity({}, { type: 'run', distanceMi: 3, timeMin: 25 }, NOW);
+    expect(data.garminKcal).toBeUndefined();
+    expect(data.burn).toBeUndefined();
+  });
+});
+
 describe('applyActivity — merge safety', () => {
   it('stamps only the touched fields and preserves unrelated same-day data', () => {
     const existing = { weight: '180', foods: '[]', _editedAt: '2026-08-06T06:00:00.000Z' };

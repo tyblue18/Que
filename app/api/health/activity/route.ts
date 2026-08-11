@@ -92,7 +92,7 @@ export async function POST(req: Request): Promise<NextResponse> {
 
   const { data, changed } = applyActivity(
     (existing?.data ?? {}) as MergeableDay,
-    { type: b.type, distanceMi, timeMin: b.time, externalId: b.externalId },
+    { type: b.type, distanceMi, timeMin: b.time, calories: b.calories, externalId: b.externalId },
     new Date().toISOString(),
   );
 

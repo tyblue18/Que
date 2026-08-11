@@ -460,13 +460,15 @@ export default function CalorieTracker() {
 
   // Build cardio from the active day's record so eat-back is live
   const todayCardio = useMemo((): CardioFields => ({
-    steps:    String(activeRec.steps    ?? '0'),
-    runDist:  String(activeRec.runDist  ?? '0'),
-    runTime:  String(activeRec.runTime  ?? '0'),
-    bikeDist: String(activeRec.bikeDist ?? '0'),
-    bikeTime: String(activeRec.bikeTime ?? '0'),
-    swimTime: String(activeRec.swimTime ?? '0'),
-  }), [activeRec.steps, activeRec.runDist, activeRec.runTime, activeRec.bikeDist, activeRec.bikeTime, activeRec.swimTime]);
+    steps:      String(activeRec.steps    ?? '0'),
+    runDist:    String(activeRec.runDist  ?? '0'),
+    runTime:    String(activeRec.runTime  ?? '0'),
+    bikeDist:   String(activeRec.bikeDist ?? '0'),
+    bikeTime:   String(activeRec.bikeTime ?? '0'),
+    swimTime:   String(activeRec.swimTime ?? '0'),
+    // Measured active calories from a linked Garmin sync — supersedes the estimate.
+    garminKcal: String(activeRec.garminKcal ?? '0'),
+  }), [activeRec.steps, activeRec.runDist, activeRec.runTime, activeRec.bikeDist, activeRec.bikeTime, activeRec.swimTime, activeRec.garminKcal]);
 
   const liveMetrics = useBudgetMetrics(profile, todayCardio);
   const u = useUnits();

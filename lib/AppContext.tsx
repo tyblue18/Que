@@ -102,6 +102,10 @@ export interface DayRecord {
   hips?:    number;   // inches
   bodyFat?: number;   // %
   burn?:     number;
+  /** Measured ACTIVE calories summed from a linked Garmin sync (see
+   *  lib/healthActivity). When present it supersedes the distance/time cardio
+   *  estimate in the budget, and `burn` is set to match. */
+  garminKcal?: number;
   budget?:   number;
   /** TDEE (BMR × activity multiplier) snapshotted at log time. Deficit- and
    *  cardio-independent, so plan-progress maintenance reconstructs exactly as
@@ -341,6 +345,10 @@ export interface AppContextValue {
 
   /** Most recent weight on or before dateStr (mirrors vanilla getLastKnownWeight). */
   getLastKnownWeight: (dateStr: string) => string;
+
+  /** Re-pull the cloud snapshot and merge it in (per-field newer-wins). Call
+   *  after a server-side write — e.g. a Garmin sync — to surface it without a reload. */
+  refreshFromCloud: () => Promise<void>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -393,6 +401,68 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // ── 10. UserProfile ────────────────────────────────────────────────────────
   const [profile, setProfileState] = useState<UserProfile>(DEFAULT_PROFILE);
+
+  // Pull the cloud snapshot and merge it into local state + localStorage. Runs
+  // on mount, and can be called again — e.g. after a Garmin sync pushes new
+  // cardio server-side — to surface remote changes without a reload. Per-field
+  // newer-wins (lib/dayMerge); days edited THIS session (dirtyDaysRef) are never
+  // overwritten. Failures are silent (localStorage stays the fallback).
+  const refreshFromCloud = useCallback(async () => {
+    const remote = await pullFromCloud().catch(() => null);
+    if (!remote) return;
+
+    if (remote.localDB && typeof remote.localDB === 'object') {
+      const remoteDB = remote.localDB as Record<string, unknown>;
+      const mergeRemote = (
+        local: Record<string, unknown> | undefined,
+        remoteRec: Record<string, unknown>,
+      ): Record<string, unknown> =>
+        local
+          ? (mergeDays(local as MergeableDay, remoteRec as MergeableDay).merged as Record<string, unknown>)
+          : remoteRec;
+      setLocalDB(prev => {
+        const next: Record<string, DayRecord> = { ...prev };
+        for (const [date, remoteData] of Object.entries(remoteDB)) {
+          if (dirtyDaysRef.current.has(date)) continue;
+          next[date] = mergeRemote(
+            prev[date] as Record<string, unknown> | undefined,
+            remoteData as Record<string, unknown>,
+          ) as DayRecord;
+        }
+        return next;
+      });
+      try {
+        const local = JSON.parse(localStorage.getItem(DB_KEY) ?? '{}') as Record<string, unknown>;
+        const merged: Record<string, unknown> = { ...local };
+        for (const [date, remoteData] of Object.entries(remoteDB)) {
+          if (dirtyDaysRef.current.has(date)) continue;
+          merged[date] = mergeRemote(
+            local[date] as Record<string, unknown> | undefined,
+            remoteData as Record<string, unknown>,
+          );
+        }
+        localStorage.setItem(DB_KEY, JSON.stringify(merged));
+      } catch { /* storage full — skip */ }
+    }
+
+    if (remote.profile && typeof remote.profile === 'object') {
+      const p = remote.profile as Record<string, string>;
+      if (Object.keys(p).length > 0) {
+        setProfileState({
+          weight:        p.w || '180',
+          height:        p.h || '70',
+          age:           p.a || '29',
+          sex:           (p.s as 'male' | 'female') || 'male',
+          deficit:       p.b || '500',
+          activityLevel: p.l || '1.45',
+        });
+        try { localStorage.setItem(PROFILE_KEY, JSON.stringify(p)); } catch { /* noop */ }
+      }
+    }
+    if (remote.settings && typeof remote.settings === 'object') {
+      restoreSettings(remote.settings as Record<string, unknown>);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─────────────────────────────────────────────────────────────────────────
   // HYDRATION — runs once on mount (client only, never on SSR)
@@ -450,78 +520,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     setIsLoaded(true);
 
-    // ── Pull from cloud and merge (remote wins per day) ────────────────────
-    // Fire-and-forget — failures are silent, localStorage is the fallback.
-    pullFromCloud().then(remote => {
-      if (!remote) return;
-
-      if (remote.localDB && typeof remote.localDB === 'object') {
-        const remoteDB = remote.localDB as Record<string, unknown>;
-        // Per-day newer-wins merge. Previously "remote wins" — but if this
-        // device had unsynced edits from a previous session (local edit, then
-        // app closed before sync flushed), the remote pull would silently
-        // overwrite them. Now we compare _editedAt and keep the newer one.
-        // Dirty days (edited this session) are still skipped — those get
-        // pushed to cloud immediately and shouldn't be touched by the pull.
-        // Per-FIELD merge (lib/dayMerge), replacing the old whole-day pickNewer.
-        // ORIENTATION: local = THIS device's day, incoming = the REMOTE pulled
-        // day. mergeDays gives ties to `incoming` (= remote), preserving the
-        // prior "remote wins equal/missing timestamps so cron-side writes
-        // propagate" rule — now applied per field, so a remote weight and a
-        // local foods edit to the same day both survive instead of one clobbering
-        // the other. Days edited THIS session (dirtyDaysRef) are still skipped —
-        // they push to cloud and shouldn't be pulled over.
-        const mergeRemote = (
-          local: Record<string, unknown> | undefined,
-          remoteRec: Record<string, unknown>,
-        ): Record<string, unknown> =>
-          local
-            ? (mergeDays(local as MergeableDay, remoteRec as MergeableDay).merged as Record<string, unknown>)
-            : remoteRec;
-        setLocalDB(prev => {
-          const next: Record<string, DayRecord> = { ...prev };
-          for (const [date, remoteData] of Object.entries(remoteDB)) {
-            if (dirtyDaysRef.current.has(date)) continue;
-            next[date] = mergeRemote(
-              prev[date] as Record<string, unknown> | undefined,
-              remoteData as Record<string, unknown>,
-            ) as DayRecord;
-          }
-          return next;
-        });
-        try {
-          const local = JSON.parse(localStorage.getItem(DB_KEY) ?? '{}') as Record<string, unknown>;
-          const merged: Record<string, unknown> = { ...local };
-          for (const [date, remoteData] of Object.entries(remoteDB)) {
-            if (dirtyDaysRef.current.has(date)) continue;
-            merged[date] = mergeRemote(
-              local[date] as Record<string, unknown> | undefined,
-              remoteData as Record<string, unknown>,
-            );
-          }
-          localStorage.setItem(DB_KEY, JSON.stringify(merged));
-        } catch { /* storage full — skip */ }
-      }
-
-      if (remote.profile && typeof remote.profile === 'object') {
-        const p = remote.profile as Record<string, string>;
-        if (Object.keys(p).length > 0) {
-          setProfileState({
-            weight:        p.w || '180',
-            height:        p.h || '70',
-            age:           p.a || '29',
-            sex:           (p.s as 'male' | 'female') || 'male',
-            deficit:       p.b || '500',
-            activityLevel: p.l || '1.45',
-          });
-          try { localStorage.setItem(PROFILE_KEY, JSON.stringify(p)); } catch { /* noop */ }
-        }
-      }
-      // Restore settings (profile photo, presets, plan, etc.)
-      if (remote.settings && typeof remote.settings === 'object') {
-        restoreSettings(remote.settings as Record<string, unknown>);
-      }
-    }).catch(() => { /* offline — no-op */ });
+    // ── Pull from cloud and merge (per-field newer-wins) ───────────────────
+    // Extracted to refreshFromCloud so a Garmin sync can re-run it. Fire-and-
+    // forget — failures are silent, localStorage is the fallback.
+    void refreshFromCloud();
   }, []);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -786,6 +788,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       persistDB,
       persistProfile,
       getLastKnownWeight,
+      refreshFromCloud,
     }),
     [
       today, todayStr,
@@ -796,7 +799,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       profile, isLoaded,
       setActiveDayFocus, updateDayRecord, getDayRecord,
       persistDB, persistProfile, setProfile,
-      getLastKnownWeight,
+      getLastKnownWeight, refreshFromCloud,
     ]
   );
 

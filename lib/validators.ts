@@ -202,6 +202,7 @@ export const healthActivitySchema = z.object({
   distance:   z.number().nonnegative().max(1000).optional(), // in `unit`; required for run/bike
   unit:       z.enum(['mi', 'km']).optional(),               // default mi (handled in route)
   time:       z.number().positive().max(6000),               // minutes (≤100h)
+  calories:   z.number().nonnegative().max(20000).optional(), // measured ACTIVE kcal (device HR/power); supersedes the estimate
   date:       dateString.optional(),                         // defaults to user's local today
   externalId: z.string().min(1).max(128).optional(),         // stable workout id → idempotent re-sends
 }).refine(

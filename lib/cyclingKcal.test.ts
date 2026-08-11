@@ -65,3 +65,26 @@ describe('computeCardioBurn — bike', () => {
     expect(bike(0, 0).bikeBurn).toBe(0);
   });
 });
+
+describe('computeCardioBurn — measured Garmin calories override', () => {
+  const withKcal = (bikeDist: number, bikeTime: number, garminKcal: string) =>
+    computeCardioBurn(P80, {
+      steps: '0', runDist: '0', runTime: '0',
+      bikeDist: String(bikeDist), bikeTime: String(bikeTime), swimTime: '0', garminKcal,
+    });
+
+  it('uses the measured active calories as the activity burn (not the estimate)', () => {
+    const est = bike(12, 40).activityBurn;              // physics estimate
+    const m   = withKcal(12, 40, '465');                // Garmin says 465 active
+    expect(m.activityBurn).toBe(465);
+    expect(m.activityBurn).not.toBe(est);
+  });
+
+  it('scales the per-type breakdown to the measured total', () => {
+    expect(withKcal(12, 40, '465').bikeBurn).toBe(465); // bike-only ⇒ all of it
+  });
+
+  it('falls back to the estimate when garminKcal is 0', () => {
+    expect(withKcal(12, 40, '0').activityBurn).toBe(bike(12, 40).activityBurn);
+  });
+});

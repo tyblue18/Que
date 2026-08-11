@@ -5,6 +5,7 @@ import { MotionConfig } from 'framer-motion';
 import dynamic from 'next/dynamic';
 import { Calendar, BarChart2, Layers, Utensils, Users } from 'lucide-react';
 import { AuthHeader }    from '@/components/header';
+import { SyncGarminButton } from '@/components/SyncGarminButton';
 import CalendarScheduler from '@/components/CalendarScheduler';
 import WorkoutLogger     from '@/components/WorkoutLogger';
 import LiftingPlanBuilder from '@/components/lifting/LiftingPlanBuilder';
@@ -74,6 +75,7 @@ export default function WorkoutPage() {
     <RestTimerProvider>
     <div className="app-shell">
       <AuthHeader />
+      <SyncGarminButton />
       <InviteRedeemer />
       <BadgeCelebration />
       <FunnelTracker />
