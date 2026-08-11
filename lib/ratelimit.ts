@@ -47,6 +47,23 @@ export const activityLimit = new Ratelimit({
   prefix:  'rl:activity',
 });
 
+// 20 data_tracker connect/status/metrics reads per user per minute — plenty for
+// the connect form + polling the metrics view, but caps probing of the
+// server-side URL fetch (SSRF surface).
+export const dataTrackerLimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(20, '1 m'),
+  prefix:  'rl:dtrack',
+});
+
+// 6 tracker-triggered Garmin syncs per user per minute. A sync spends the user's
+// finite Garmin API budget, so this is tighter than the read limiter.
+export const dataTrackerSyncLimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(6, '1 m'),
+  prefix:  'rl:dtrack-sync',
+});
+
 // 30 Sentry tunnel envelopes per IP per minute. Errors are rare in normal use
 // (and the client SDK dedupes), so this is plenty — it exists to stop forged
 // envelopes from flooding (and exhausting) the Sentry project quota.

@@ -33,6 +33,7 @@ import { parseExercises, deriveCardioFields, setCardioOfKind, existingCardioDist
 import { useUnits, kgToLb, cmToIn } from '@/lib/units';
 import { Measurements } from '@/components/metrics/Measurements';
 import { ProgressPhoto } from '@/components/metrics/ProgressPhoto';
+import { DataTrackerPanel } from '@/components/metrics/DataTrackerPanel';
 import {
   MilestoneModal, CelebrationModal, PlanProgressModal, PlanModal, ProjectionModal, PlanHistoryModal,
 } from '@/components/metrics/MetricsModals';
@@ -470,6 +471,7 @@ function ProfilePanel({ profile, onChange, onOpenPlan, onOpenRunPlan, onOpenLift
         <ProgressPhoto />
 
         <StepSyncPanel />
+        <DataTrackerPanel />
       </div>
     </div>
   );

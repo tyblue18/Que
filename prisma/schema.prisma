@@ -16,6 +16,7 @@ model AppUser {
 
   workoutData WorkoutData?
   healthConn  HealthConnection?
+  dataTracker DataTrackerConnection?
 
   // Profile
   status          String?   // short status message
@@ -150,6 +151,25 @@ model HealthConnection {
   googleRefreshToken String?
   googleExpiresAt    DateTime?
   googleScope        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// A user's self-hosted Garmin data_tracker instance. We store only a capability
+// to THEIR OWN service — its base URL + the shared secret (the tracker's
+// CRON_SECRET) — NEVER any Garmin credentials, which live solely in that
+// instance. Que calls the tracker server-to-server to trigger a sync (which
+// pushes cardio back via the personal health token) and to read the metrics
+// snapshot. Server-only: the secret is never returned to the client.
+model DataTrackerConnection {
+  id     String  @id @default(cuid())
+  userId String  @unique
+  user   AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  baseUrl    String    // https origin of the user's data_tracker (no trailing path)
+  secret     String    // the tracker's CRON_SECRET (Bearer) — server-side only
+  lastSyncAt DateTime? // last successful Que-triggered sync
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -384,6 +384,41 @@ export interface CardioBurn {
  * (which broke the 1,000-cal badge, the plan ledger's maintenance, and the burn
  * chart). NET of resting energy (gross − RMR over the same minutes).
  */
+/**
+ * Flat-ground cycling energy estimate (kcal, GROSS metabolic) from average speed.
+ *
+ * Why not METs: a single MET per speed band assumes steady, flat effort, so it
+ * badly overestimates easy/flat riding — the 14 mph "10 MET" band gives an 80 kg
+ * rider ~840 kcal/hr, ~2.5× a physics estimate. Running/swimming track effort
+ * with pace (a MET table is fine); cycling decouples speed from work (coasting,
+ * drafting, wind, gradient), so we model the actual work instead:
+ *
+ *   power = (rolling + aero) resistance × speed, converted to metabolic kcal at
+ *   ~24% gross efficiency. rolling = Crr·m·g ; aero = ½·ρ·CdA·v².
+ *
+ * Limits (honest): with no GPS elevation we assume FLAT + still air, so this
+ * UNDER-counts big climbs and headwinds — a linked Garmin (measured calories)
+ * supersedes this. Constants are typical road-rider estimates and are tunable.
+ * [estimate]
+ */
+const BIKE_CRR   = 0.006;   // rolling resistance coefficient (road tyre)
+const BIKE_CDA   = 0.36;    // drag area (m²), hoods position
+const AIR_RHO    = 1.225;   // air density (kg/m³) at ~15°C, sea level
+const GRAVITY    = 9.81;
+const BIKE_MASS  = 9;       // added bike mass (kg)
+const GROSS_EFF  = 0.24;    // metabolic → mechanical gross efficiency
+const DRIVE_EFF  = 0.97;    // drivetrain loss
+
+export function cyclingKcalFlat(speedMph: number, minutes: number, riderKg: number): number {
+  if (speedMph <= 0 || minutes <= 0) return 0;
+  const v     = speedMph * 0.44704;             // m/s
+  const mass  = riderKg + BIKE_MASS;
+  const fRoll = BIKE_CRR * mass * GRAVITY;
+  const fAir  = 0.5 * AIR_RHO * BIKE_CDA * v * v;
+  const watts = ((fRoll + fAir) * v) / DRIVE_EFF;
+  return (watts * minutes * 60) / GROSS_EFF / 4184;  // J → kcal metabolic
+}
+
 export function computeCardioBurn(profile: UserProfile, cardio: CardioFields): CardioBurn {
   const wLbs = parseNum(profile.weight) || 180;
   const hIn  = parseNum(profile.height) || 70;
@@ -423,13 +458,9 @@ export function computeCardioBurn(profile: UserProfile, cardio: CardioFields): C
   let bikeBurn = 0, bikeSpeed = 0;
   if (bMi > 0 && bMin > 0) {
     bikeSpeed = (bMi / bMin) * 60;
-    let met = 4;
-    if      (bikeSpeed >= 20) met = 15.8;
-    else if (bikeSpeed >= 16) met = 12;
-    else if (bikeSpeed >= 14) met = 10;
-    else if (bikeSpeed >= 12) met = 8;
-    else if (bikeSpeed >= 10) met = 6.8;
-    bikeBurn = netOf(met * 3.5 * kg / 200 * bMin, bMin);
+    // Physics (flat-ground power) model instead of a speed→MET band — see
+    // cyclingKcalFlat. NET of resting like the other activities.
+    bikeBurn = netOf(cyclingKcalFlat(bikeSpeed, bMin, kg), bMin);
   }
 
   const sMin     = parseNum(cardio.swimTime);

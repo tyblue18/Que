@@ -208,3 +208,10 @@ export const healthActivitySchema = z.object({
   d => d.type === 'swim' || (typeof d.distance === 'number' && d.distance > 0),
   { message: 'distance is required for run and bike', path: ['distance'] },
 );
+
+// ── /api/datatracker POST (connect a self-hosted Garmin data_tracker) ──────────
+// baseUrl is further validated + SSRF-guarded in lib/dataTracker.normalizeTrackerUrl.
+export const dataTrackerConnectSchema = z.object({
+  baseUrl: z.string().min(1).max(300),
+  secret:  z.string().min(1).max(300),
+});
