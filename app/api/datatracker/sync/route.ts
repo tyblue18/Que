@@ -17,7 +17,7 @@ import { prisma }               from '@/lib/prisma';
 import { dataTrackerSyncLimit } from '@/lib/ratelimit';
 import { callTracker, TrackerError } from '@/lib/dataTracker';
 
-export async function POST(): Promise<NextResponse> {
+export async function POST(req: Request): Promise<NextResponse> {
   const session = await getServerSession(authOptions);
   const userId = session?.user?.id;
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
@@ -28,10 +28,16 @@ export async function POST(): Promise<NextResponse> {
   const conn = await prisma.dataTrackerConnection.findUnique({ where: { userId } });
   if (!conn) return NextResponse.json({ error: 'No data_tracker connected.' }, { status: 400 });
 
+  // `?full=1` re-sends already-imported activities so Que can backfill fields
+  // added after they were first pushed (e.g. measured calories) over a wider
+  // window. Normal sync just forwards new activities.
+  const full = new URL(req.url).searchParams.get('full') === '1';
+  const path = full ? '/api/sync?resend=true&days=120' : '/api/sync';
+
   let result: unknown;
   try {
     // A Garmin pull can take a while; give it a generous but bounded window.
-    result = await callTracker(conn.baseUrl, conn.secret, '/api/sync', { method: 'POST', timeoutMs: 60_000 });
+    result = await callTracker(conn.baseUrl, conn.secret, path, { method: 'POST', timeoutMs: 90_000 });
   } catch (e) {
     if (e instanceof TrackerError) return NextResponse.json({ error: e.message }, { status: e.status });
     return NextResponse.json({ error: 'Sync failed.' }, { status: 502 });

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useApp } from '@/lib/AppContext';
 
 // ── Types (defensive — the tracker snapshot is loosely shaped) ────────────────
 interface Status { connected: boolean; baseUrl: string | null; lastSyncAt: string | null }
@@ -26,6 +27,7 @@ function fmtWhen(iso: string | null): string {
 }
 
 export function DataTrackerPanel() {
+  const { refreshFromCloud } = useApp();
   const [status,  setStatus]  = useState<Status | null>(null);
   const [loading, setLoading] = useState(true);
   const [open,    setOpen]    = useState(false);
@@ -78,19 +80,24 @@ export function DataTrackerPanel() {
     finally { setConnecting(false); }
   }, [url, secret, loadMetrics]);
 
-  const syncNow = useCallback(async () => {
+  const syncNow = useCallback(async (full = false) => {
     setSyncMsg(''); setSyncing(true);
     try {
-      const r = await fetch('/api/datatracker/sync', { method: 'POST' });
+      const r = await fetch(`/api/datatracker/sync${full ? '?full=1' : ''}`, { method: 'POST' });
       const d = await r.json();
       if (!r.ok) { setSyncMsg(d.error ?? 'Sync failed.'); return; }
-      const pushed = d.result?.que?.sent;
-      setSyncMsg(typeof pushed === 'number' ? `Synced — ${pushed} cardio workout${pushed === 1 ? '' : 's'} added.` : 'Synced.');
+      // Re-pull the cloud so newly-imported/backfilled cardio (and its calories)
+      // shows immediately — without this the budget keeps the stale number.
+      await refreshFromCloud();
       await refreshStatus();
       await loadMetrics();
+      const sent = d.result?.que?.sent;
+      setSyncMsg(typeof sent === 'number'
+        ? `Synced — ${sent} workout${sent === 1 ? '' : 's'} ${full ? 'refreshed' : 'added'}.`
+        : 'Synced.');
     } catch { setSyncMsg('Sync failed — check your connection.'); }
     finally { setSyncing(false); }
-  }, [refreshStatus, loadMetrics]);
+  }, [refreshFromCloud, refreshStatus, loadMetrics]);
 
   const disconnect = useCallback(async () => {
     await fetch('/api/datatracker', { method: 'DELETE' }).catch(() => {});
@@ -167,9 +174,16 @@ export function DataTrackerPanel() {
                   </button>
                 </div>
 
-                <button type="button" onClick={syncNow} disabled={syncing}
+                <button type="button" onClick={() => syncNow(false)} disabled={syncing}
                   className="que-btn-primary w-full py-2.5 text-[10px] disabled:opacity-50">
                   {syncing ? 'Syncing Garmin…' : 'Sync now'}
+                </button>
+                {/* Forces a re-send of ALL recent activities so Que backfills
+                    fields added after they were first imported (e.g. Garmin's
+                    measured calories). Use it once after enabling accurate calories. */}
+                <button type="button" onClick={() => syncNow(true)} disabled={syncing}
+                  className="que-btn-ghost w-full py-2 text-[9px] disabled:opacity-50">
+                  Re-sync all history (fix calories)
                 </button>
                 {syncMsg && <p className="font-mono text-[9px] text-[var(--ink-2)] text-center">{syncMsg}</p>}
 
