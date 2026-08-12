@@ -35,6 +35,11 @@ export interface CardioFields {
    *  cardio). When > 0 it supersedes the distance/time estimate — Garmin's HR/
    *  power number captures grade, wind, and effort the estimate can't. */
   garminKcal?: string;
+  /** Per-type measured ACTIVE calories (same source). Preferred over the day
+   *  total: each activity card shows its own Garmin number exactly. */
+  garminRunKcal?:  string;
+  garminBikeKcal?: string;
+  garminSwimKcal?: string;
 }
 export const EMPTY_CARDIO: CardioFields = {
   steps: '0', runDist: '0', runTime: '0',
@@ -471,14 +476,22 @@ export function computeCardioBurn(profile: UserProfile, cardio: CardioFields): C
   let   swimBurn = sMin > 0 ? netOf(7.0 * 3.5 * kg / 200 * sMin, sMin) : 0;
 
   // Measured override: a linked Garmin sync provides real ACTIVE calories (HR/
-  // power based), which capture grade, wind, and effort the distance-time
-  // estimate can't — this is the fix for cycling numbers reading low. Garmin
-  // "active" kcal are already net of resting, so use them directly, and scale
-  // the per-type breakdown to the measured total so the split still sums.
-  const gKcal  = parseNum(cardio.garminKcal);
-  const estSum = runBurn + bikeBurn + swimBurn;
-  let activityBurn = Math.round(estSum);
-  if (gKcal > 0) {
+  // power based), which capture grade, wind, indoor effort — everything the
+  // distance/time estimate can't. Garmin "active" kcal are already net of
+  // resting, so they substitute directly, PER TYPE — the bike card shows the
+  // ride's actual Garmin number, not a scaled share of a day total.
+  const gRun  = parseNum(cardio.garminRunKcal);
+  const gBike = parseNum(cardio.garminBikeKcal);
+  const gSwim = parseNum(cardio.garminSwimKcal);
+  if (gRun  > 0) runBurn  = Math.round(gRun);
+  if (gBike > 0) bikeBurn = Math.round(gBike);
+  if (gSwim > 0) swimBurn = Math.round(gSwim);
+  let activityBurn = Math.round(runBurn + bikeBurn + swimBurn);
+  // Legacy fallback: days imported before per-type sums existed carry only the
+  // day total — scale the estimate split to it so the total is still measured.
+  const gKcal = parseNum(cardio.garminKcal);
+  if (gKcal > 0 && !(gRun > 0 || gBike > 0 || gSwim > 0)) {
+    const estSum = runBurn + bikeBurn + swimBurn;
     activityBurn = Math.round(gKcal);
     if (estSum > 0) {
       const scale = gKcal / estSum;

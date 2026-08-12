@@ -467,8 +467,11 @@ export default function CalorieTracker() {
     bikeTime:   String(activeRec.bikeTime ?? '0'),
     swimTime:   String(activeRec.swimTime ?? '0'),
     // Measured active calories from a linked Garmin sync — supersedes the estimate.
-    garminKcal: String(activeRec.garminKcal ?? '0'),
-  }), [activeRec.steps, activeRec.runDist, activeRec.runTime, activeRec.bikeDist, activeRec.bikeTime, activeRec.swimTime, activeRec.garminKcal]);
+    garminKcal:     String(activeRec.garminKcal     ?? '0'),
+    garminRunKcal:  String(activeRec.garminRunKcal  ?? '0'),
+    garminBikeKcal: String(activeRec.garminBikeKcal ?? '0'),
+    garminSwimKcal: String(activeRec.garminSwimKcal ?? '0'),
+  }), [activeRec.steps, activeRec.runDist, activeRec.runTime, activeRec.bikeDist, activeRec.bikeTime, activeRec.swimTime, activeRec.garminKcal, activeRec.garminRunKcal, activeRec.garminBikeKcal, activeRec.garminSwimKcal]);
 
   const liveMetrics = useBudgetMetrics(profile, todayCardio);
   const u = useUnits();

@@ -80,11 +80,35 @@ describe('computeCardioBurn — measured Garmin calories override', () => {
     expect(m.activityBurn).not.toBe(est);
   });
 
-  it('scales the per-type breakdown to the measured total', () => {
+  it('legacy day-total scales the per-type breakdown', () => {
     expect(withKcal(12, 40, '465').bikeBurn).toBe(465); // bike-only ⇒ all of it
   });
 
   it('falls back to the estimate when garminKcal is 0', () => {
     expect(withKcal(12, 40, '0').activityBurn).toBe(bike(12, 40).activityBurn);
+  });
+
+  it('PER-TYPE measured calories show each activity its exact Garmin number', () => {
+    // A triple day: run + bike + swim, each with its own measured value.
+    const m = computeCardioBurn(P80, {
+      steps: '0', runDist: '2.3', runTime: '20',
+      bikeDist: '15', bikeTime: '62', swimTime: '20',
+      garminKcal: '835', garminRunKcal: '221', garminBikeKcal: '465', garminSwimKcal: '149',
+    });
+    expect(m.runBurn).toBe(221);
+    expect(m.bikeBurn).toBe(465);   // the ride's real number — NOT a scaled share
+    expect(m.swimBurn).toBe(149);
+    expect(m.activityBurn).toBe(835);
+  });
+
+  it('mixes measured and estimated per type (only bike measured)', () => {
+    const m = computeCardioBurn(P80, {
+      steps: '0', runDist: '3', runTime: '25',
+      bikeDist: '0', bikeTime: '30', swimTime: '0',
+      garminBikeKcal: '184', // indoor ride: no distance, measured calories
+    });
+    expect(m.bikeBurn).toBe(184);           // measured wins despite no distance
+    expect(m.runBurn).toBeGreaterThan(0);   // run still estimated
+    expect(m.activityBurn).toBe(m.runBurn + 184);
   });
 });

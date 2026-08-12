@@ -117,11 +117,23 @@ export function applyActivity(
 
   const data: MergeableDay = { ...existing, _garminActs: ledger, _importedActivityIds: Object.keys(ledger) };
   const touched: string[] = [];
+  // Per-TYPE measured-calorie sums, so the UI can show each activity's actual
+  // Garmin number (bike card = the ride's 465) instead of scaling the day
+  // total across activities by their estimates.
+  const kcalByType: Record<ActivityType, number> = { run: 0, bike: 0, swim: 0 };
+  for (const a of Object.values(ledger)) kcalByType[a.type] += a.kcal;
+  const KCAL_FIELD: Record<ActivityType, string> = {
+    run: 'garminRunKcal', bike: 'garminBikeKcal', swim: 'garminSwimKcal',
+  };
   for (const t of seen) {
     const { dist, time } = FIELD_MAP[t];
     data[dist] = +(agg[dist] ?? 0).toFixed(2);
     data[time] = +(agg[time] ?? 0).toFixed(1);
     touched.push(dist, time);
+    if (kcalByType[t] > 0) {
+      data[KCAL_FIELD[t]] = Math.round(kcalByType[t]);
+      touched.push(KCAL_FIELD[t]);
+    }
   }
   if (kcalTotal > 0) {
     data.garminKcal = Math.round(kcalTotal);

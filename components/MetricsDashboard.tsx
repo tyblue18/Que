@@ -1632,7 +1632,10 @@ export default function MetricsDashboard({ openProfileSignal = 0 }: { openProfil
       swimTime:   String(rec.swimTime ?? 0),
       // Measured Garmin calories supersede the estimate (fixes the cardio card
       // + burn breakdown reading low, matching the calorie budget).
-      garminKcal: String(rec.garminKcal ?? 0),
+      garminKcal:     String(rec.garminKcal     ?? 0),
+      garminRunKcal:  String(rec.garminRunKcal  ?? 0),
+      garminBikeKcal: String(rec.garminBikeKcal ?? 0),
+      garminSwimKcal: String(rec.garminSwimKcal ?? 0),
     });
   }, [isLoaded, activeDayFocus, activeDayRec]);
 

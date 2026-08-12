@@ -106,6 +106,11 @@ export interface DayRecord {
    *  lib/healthActivity). When present it supersedes the distance/time cardio
    *  estimate in the budget, and `burn` is set to match. */
   garminKcal?: number;
+  /** Per-type measured ACTIVE calories — preferred over the day total so each
+   *  activity card shows its own Garmin number. */
+  garminRunKcal?:  number;
+  garminBikeKcal?: number;
+  garminSwimKcal?: number;
   budget?:   number;
   /** TDEE (BMR × activity multiplier) snapshotted at log time. Deficit- and
    *  cardio-independent, so plan-progress maintenance reconstructs exactly as

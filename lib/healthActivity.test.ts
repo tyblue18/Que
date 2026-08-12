@@ -90,6 +90,17 @@ describe('applyActivity — measured calories', () => {
     const second = applyActivity(first, { type: 'run', distanceMi: 3, timeMin: 25, calories: 300, externalId: 'b' }, NOW).data;
     expect(second.garminKcal).toBe(765);
     expect(second.burn).toBe(765);
+    // Per-type sums so each card can show its own Garmin number.
+    expect(second.garminBikeKcal).toBe(465);
+    expect(second.garminRunKcal).toBe(300);
+  });
+
+  it('supports a distance-less indoor ride (time + calories only)', () => {
+    const { data } = applyActivity({}, { type: 'bike', distanceMi: 0, timeMin: 32, calories: 184, externalId: 'indoor' }, NOW);
+    expect(data.bikeTime).toBe(32);
+    expect(data.bikeDist).toBe(0);
+    expect(data.garminBikeKcal).toBe(184);
+    expect(data.burn).toBe(184);
   });
 
   it('omits garminKcal/burn when no calories are provided (estimate path)', () => {
