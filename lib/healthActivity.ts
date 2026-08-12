@@ -96,12 +96,11 @@ export function applyActivity(
                ? Math.round(act.calories)
                : (prev?.kcal ?? 0),
   };
-
-  if (prev && prev.type === next.type && prev.distMi === next.distMi
-      && prev.timeMin === next.timeMin && prev.kcal === next.kcal) {
-    return { data: existing, changed: false }; // nothing about this workout changed
-  }
   ledger[act.externalId] = next;
+  // NOTE: no early return on "ledger input unchanged" — the no-op decision is
+  // made at the END by comparing the DERIVED state against what's stored. An
+  // input-based check silently skipped writing fields added by a later schema
+  // (e.g. the per-type kcal sums), leaving old days permanently missing them.
 
   // Recompute per-type distance/time + total kcal from the WHOLE ledger.
   const agg: Record<string, number> = {};
@@ -151,6 +150,18 @@ export function applyActivity(
     data.exercises = rebuilt;
     touched.push('exercises');
   }
+
+  // No-op detection on the DERIVED state: if every field this import would
+  // write already holds the same value (and the ledger is unchanged), return
+  // unchanged — preserving the day's edit stamps so an idle re-sync can never
+  // beat a genuine edit from another device in the merge.
+  const sameLedger = JSON.stringify(existing._garminActs ?? {}) === JSON.stringify(ledger);
+  const sameFields = touched.every(f => {
+    const a = existing[f], b = data[f];
+    if (typeof b === 'number') return num(a) === b && a !== undefined && a !== null;
+    return String(a ?? '') === String(b ?? '');
+  });
+  if (sameLedger && sameFields) return { data: existing, changed: false };
 
   data._fieldEditedAt = stampEditedFields(existing, touched, nowIso);
   data._editedAt = nowIso;

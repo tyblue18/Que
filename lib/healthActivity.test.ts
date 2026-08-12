@@ -154,6 +154,25 @@ describe('applyActivity — measured calories', () => {
   });
 });
 
+describe('applyActivity — schema-evolution resend (the Aug-10 regression)', () => {
+  it('an identical resend still writes derived fields the day is missing', () => {
+    // A day imported under an OLDER engine: ledger + totals exist, but the
+    // later-added per-type kcal fields and exercises mirror do not.
+    const legacyDay = {
+      _garminActs: { g: { type: 'bike', distMi: 15.02, timeMin: 62, kcal: 465 } },
+      _importedActivityIds: ['g'],
+      bikeDist: 15.02, bikeTime: 62, garminKcal: 465, burn: 465,
+    };
+    const res = applyActivity(legacyDay, { type: 'bike', distanceMi: 15.02, timeMin: 62, calories: 465, externalId: 'g' }, NOW);
+    expect(res.changed).toBe(true);                 // input unchanged, but derived state incomplete
+    expect(res.data.garminBikeKcal).toBe(465);      // newly-added field materializes
+    expect(res.data.exercises).toBeTruthy();        // calendar mirror materializes
+    // And once complete, a further identical resend IS a no-op.
+    const again = applyActivity(res.data, { type: 'bike', distanceMi: 15.02, timeMin: 62, calories: 465, externalId: 'g' }, NOW);
+    expect(again.changed).toBe(false);
+  });
+});
+
 describe('applyActivity — exercises[] mirroring (calendar visibility)', () => {
   it('writes an imported ride into the exercises array with a gid marker', () => {
     const { data } = applyActivity({}, { type: 'bike', distanceMi: 6.47, timeMin: 31.9, calories: 184, externalId: 'g1' }, NOW);
