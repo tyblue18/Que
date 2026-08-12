@@ -40,7 +40,7 @@ import { weekAdjustedDays } from '@/lib/lifting/volume';
 import { buildProgramDayEntries, loadLiftPRs } from '@/lib/lifting/loadDay';
 import type { LoggedDay } from '@/lib/lifting/progression';
 import { alternativesFor, MUSCLE_LABEL } from '@/lib/lifting/alternatives';
-import { useUnits } from '@/lib/units';
+import { useUnits, fmtDuration } from '@/lib/units';
 import { streakEndingAt } from '@/lib/streaks';
 import {
   loadActiveTrainingBlock, blockForDate, weekInfoForDate, sessionFuelKcal, blockLiftPlaceholderName,
@@ -93,7 +93,7 @@ function buildCellSummary(raw: string): string {
       const r = sets[0]?.r ?? '';
       return `${e.n ?? ''}${n && r ? ` ${n}×${r}` : ''}`;
     }
-    if (e.k === 'swim') return `Swim${e.v1 ? ` ${e.v1}min` : ''}`;
+    if (e.k === 'swim') return `Swim${e.v1 ? ` ${fmtDuration(parseFloat(String(e.v1)) || 0)}` : ''}`;
     if (e.k === 'run')  return `Run${e.v1 ? ` ${e.v1}mi` : ''}`;
     if (e.k === 'bike') return `Bike${e.v1 ? ` ${e.v1}mi` : ''}`;
     return e.n ?? '';
@@ -1118,8 +1118,12 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
                 <div className="flex flex-col gap-2">
                   {cardio.map((e, i) => {
                     const labels: Record<string, string> = { swim: 'SWIM', run: 'RUN', bike: 'BIKE' };
-                    const v1unit: Record<string, string> = { swim: 'min', run: 'mi', bike: 'mi' };
-                    const v2unit: Record<string, string> = { swim: 'mi',  run: 'min', bike: 'min' };
+                    // Unit-aware rendering: durations as h:mm:ss, swim distance
+                    // in pool units (yd/m), run/bike distance in mi/km.
+                    const n1 = parseFloat(String(e.v1 ?? '0')) || 0;
+                    const n2 = parseFloat(String(e.v2 ?? '0')) || 0;
+                    const v1text = e.k === 'swim' ? fmtDuration(n1) : u.fmtDistance(n1);
+                    const v2text = e.k === 'swim' ? u.fmtSwimDistance(n2) : fmtDuration(n2);
                     const runDist  = e.k === 'run'  ? (parseFloat(String(e.v1 ?? '0')) || 0) : 0;
                     const bikeDist = e.k === 'bike' ? (parseFloat(String(e.v1 ?? '0')) || 0) : 0;
                     const swimTime = e.k === 'swim' ? (parseFloat(String(e.v1 ?? '0')) || 0) : 0;
@@ -1158,8 +1162,8 @@ function TodaysWorkoutSummary({ dateStr, rec }: { dateStr: string; rec: DayRecor
                         <div className="flex items-center gap-3">
                           <span className="font-mono text-[10px] font-bold tracking-[1.5px] text-[var(--accent)] w-12">{labels[e.k]}</span>
                           <span className="text-[14px] text-[var(--ink-0)]">
-                            {e.v1 && <span className="font-mono">{e.v1} {v1unit[e.k]}</span>}
-                            {e.v2 && <span className="font-mono text-[var(--ink-2)]"> · {e.v2}{v2unit[e.k]}</span>}
+                            {n1 > 0 && <span className="font-mono">{v1text}</span>}
+                            {n2 > 0 && <span className="font-mono text-[var(--ink-2)]"> · {v2text}</span>}
                           </span>
                           {cardioMilestoneBadge && (
                             <div className="flex items-center gap-1 flex-shrink-0">

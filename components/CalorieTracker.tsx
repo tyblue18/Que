@@ -20,7 +20,7 @@ import {
   FIXED_MEALS, MEAL_LABELS, DEFAULT_ORDER, getMealLabel,
 } from '@/components/calorie/AddFoodModal';
 import { useBudgetMetrics, type CardioFields, parseNum, fmtDateLong, loadPlan } from '@/lib/metricsTypes';
-import { useUnits } from '@/lib/units';
+import { useUnits, fmtDuration } from '@/lib/units';
 import { useSpotlightBorder } from '@/hooks/useSpotlightBorder';
 import { CelebrationModal, ProjectionModal } from '@/components/metrics/MetricsModals';
 
@@ -871,7 +871,7 @@ export default function CalorieTracker() {
             const parts: string[] = [];
             if (liveMetrics.runBurn  > 0) parts.push(runDist  > 0 ? `ran ${u.fmtDistance(runDist)}`  : 'ran');
             if (liveMetrics.bikeBurn > 0) parts.push(bikeDist > 0 ? `biked ${u.fmtDistance(bikeDist)}` : 'biked');
-            if (liveMetrics.swimBurn > 0) parts.push(swimMin  > 0 ? `swam ${Math.round(swimMin)} min` : 'swam');
+            if (liveMetrics.swimBurn > 0) parts.push(swimMin  > 0 ? `swam ${fmtDuration(swimMin)}` : 'swam');
             const did  = parts.length ? parts.join(' · ') : 'trained';
             const when = activeDayFocus === todayStr ? 'today' : 'that day';
             return (

@@ -30,7 +30,7 @@ import {
 } from '@/lib/metricsTypes';
 import { drawLineChart } from '@/lib/metricsCharts';
 import { parseExercises, deriveCardioFields, setCardioOfKind, existingCardioDistance } from '@/lib/cardioSync';
-import { useUnits, kgToLb, cmToIn } from '@/lib/units';
+import { useUnits, kgToLb, cmToIn, parseDurationToMin, fmtDuration } from '@/lib/units';
 import { Measurements } from '@/components/metrics/Measurements';
 import { ProgressPhoto } from '@/components/metrics/ProgressPhoto';
 import { DataTrackerPanel } from '@/components/metrics/DataTrackerPanel';
@@ -501,10 +501,13 @@ function PRBadge({ size = 44 }: { size?: number }) {
 // SUB-COMPONENT — CalorieBudgetCard
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Durations accept "h:mm:ss" / "mm:ss" / plain minutes (parsed at the UI edge;
+// storage stays decimal minutes) — hence 'text' inputMode so mobile keyboards
+// offer the colon.
 const CARDIO_QUICK_CFG = {
-  run:  { f1label: 'Distance / mi', f1mode: 'decimal',  f1key: 'runDist',  f2label: 'Duration / min', f2key: 'runTime'  },
-  bike: { f1label: 'Distance / mi', f1mode: 'decimal',  f1key: 'bikeDist', f2label: 'Duration / min', f2key: 'bikeTime' },
-  swim: { f1label: 'Duration / min', f1mode: 'numeric', f1key: 'swimTime', f2label: null,              f2key: null       },
+  run:  { f1label: 'Distance / mi', f1mode: 'decimal', f1key: 'runDist',  f2label: 'Duration', f2key: 'runTime'  },
+  bike: { f1label: 'Distance / mi', f1mode: 'decimal', f1key: 'bikeDist', f2label: 'Duration', f2key: 'bikeTime' },
+  swim: { f1label: 'Duration',      f1mode: 'text',    f1key: 'swimTime', f2label: null,       f2key: null       },
 } as const;
 
 function CalorieBudgetCard({ m, onOpenProgress, prFlags }: {
@@ -530,8 +533,12 @@ function CalorieBudgetCard({ m, onOpenProgress, prFlags }: {
     const cfg = CARDIO_QUICK_CFG[kind];
     const f1IsDistance = cfg.f1key === 'runDist' || cfg.f1key === 'bikeDist';
     const raw = (rec as Record<string, unknown>)[cfg.f1key];
-    setF1(raw ? (f1IsDistance ? u.dispDistance(parseNum(String(raw))) : String(raw)) : ''); // stored mi → display
-    setF2(cfg.f2key ? String((rec as Record<string, unknown>)[cfg.f2key] || '') : '');
+    // Prefill: distance → display units; duration → h:mm:ss.
+    setF1(raw
+      ? (f1IsDistance ? u.dispDistance(parseNum(String(raw))) : fmtDuration(parseNum(String(raw))))
+      : '');
+    const f2raw = cfg.f2key ? parseNum(String((rec as Record<string, unknown>)[cfg.f2key] || 0)) : 0;
+    setF2(f2raw > 0 ? fmtDuration(f2raw) : '');
     setCardioModal(kind);
   }, [getDayRecord, activeDayFocus, u]);
 
@@ -548,18 +555,15 @@ function CalorieBudgetCard({ m, onOpenProgress, prFlags }: {
 
   const submitCardio = useCallback(() => {
     if (!cardioModal) return;
-    const cfg = CARDIO_QUICK_CFG[cardioModal];
-    const f1val = parseFloat(f1) || 0;
-    const f2val = cfg.f2key ? (parseFloat(f2) || 0) : 0;
     let distanceMi = 0;
     let durationMin = 0;
     if (cardioModal === 'swim') {
       // Swim modal edits TIME only (f1) — preserve any existing logged distance.
-      durationMin = f1val;
+      durationMin = parseDurationToMin(f1) ?? 0;
       distanceMi = existingCardioDistance(parseExercises((getDayRecord(activeDayFocus) as { exercises?: unknown }).exercises), 'swim');
     } else {
-      distanceMi = u.toStoredDistance(f1val); // display unit → canonical miles
-      durationMin = f2val;
+      distanceMi = u.toStoredDistance(parseFloat(f1) || 0); // display unit → canonical miles
+      durationMin = parseDurationToMin(f2) ?? 0;
     }
     writeCardio(cardioModal, distanceMi, durationMin);
     setCardioModal(null);
@@ -588,7 +592,7 @@ function CalorieBudgetCard({ m, onOpenProgress, prFlags }: {
     {
       label: 'SWIM', value: m.swimBurn, key: 'swim',
       dist: undefined,
-      pace: swimMin  > 0 ? `${swimMin} min`        : undefined,
+      pace: swimMin  > 0 ? fmtDuration(swimMin)    : undefined,
     },
     { label: 'STEPS', value: m.stepBurn, key: 'step', dim: true, dist: undefined, pace: undefined },
   ];
@@ -839,6 +843,7 @@ function CalorieBudgetCard({ m, onOpenProgress, prFlags }: {
                     <input
                       autoFocus type="text" inputMode={cfg.f1mode}
                       className="que-input" value={f1} onChange={e => setF1(e.target.value)}
+                      placeholder={cardioModal === 'swim' ? '45:00' : undefined}
                       onKeyDown={e => e.key === 'Enter' && submitCardio()}
                     />
                   </div>
@@ -846,8 +851,9 @@ function CalorieBudgetCard({ m, onOpenProgress, prFlags }: {
                     <div>
                       <label className="que-label">{cfg.f2label}</label>
                       <input
-                        type="text" inputMode="numeric"
+                        type="text" inputMode="text"
                         className="que-input" value={f2} onChange={e => setF2(e.target.value)}
+                        placeholder="45:00"
                         onKeyDown={e => e.key === 'Enter' && submitCardio()}
                       />
                     </div>

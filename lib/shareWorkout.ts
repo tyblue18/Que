@@ -9,6 +9,7 @@
  */
 
 import type { DayRecord, ExerciseEntry } from '@/lib/AppContext';
+import { fmtDuration, miToYd } from '@/lib/units';
 
 export interface CardioSeg { kind: 'run' | 'bike' | 'swim'; dist: number; time: number }
 export interface WorkoutItem { kind: 'lift' | 'run' | 'bike' | 'swim'; name: string; detail: string; group: string }
@@ -53,13 +54,15 @@ export function summarizeDay(rec: DayRecord | undefined): DaySummary {
     items.push({ kind: 'lift', name, detail, group: ex.g || 'Other' });
     lines.push(`${name}${detail ? ` — ${detail}` : ''}`);
   }
+  // Snapshot strings are baked into the post payload (read by OTHER users), so
+  // they use a fixed format: durations as h:mm:ss, swim distance in pool yards.
   const cardio: CardioSeg[] = [];
   const run = num(rec.runDist), runT = num(rec.runTime);
-  if (run > 0) { items.push({ kind: 'run', name: 'Run', detail: `${run} mi${runT ? ` · ${runT} min` : ''}`, group: 'Cardio' }); lines.push(`Ran ${run} mi`); cardio.push({ kind: 'run', dist: run, time: runT }); }
+  if (run > 0) { items.push({ kind: 'run', name: 'Run', detail: `${run} mi${runT ? ` · ${fmtDuration(runT)}` : ''}`, group: 'Cardio' }); lines.push(`Ran ${run} mi`); cardio.push({ kind: 'run', dist: run, time: runT }); }
   const bike = num(rec.bikeDist), bikeT = num(rec.bikeTime);
-  if (bike > 0) { items.push({ kind: 'bike', name: 'Bike', detail: `${bike} mi${bikeT ? ` · ${bikeT} min` : ''}`, group: 'Cardio' }); lines.push(`Biked ${bike} mi`); cardio.push({ kind: 'bike', dist: bike, time: bikeT }); }
+  if (bike > 0) { items.push({ kind: 'bike', name: 'Bike', detail: `${bike} mi${bikeT ? ` · ${fmtDuration(bikeT)}` : ''}`, group: 'Cardio' }); lines.push(`Biked ${bike} mi`); cardio.push({ kind: 'bike', dist: bike, time: bikeT }); }
   const swim = num(rec.swimDist), swimT = num(rec.swimTime);
-  if (swim > 0 || swimT > 0) { items.push({ kind: 'swim', name: 'Swim', detail: `${swim ? `${swim} mi` : ''}${swimT ? `${swim ? ' · ' : ''}${swimT} min` : ''}`, group: 'Cardio' }); lines.push('Swam'); cardio.push({ kind: 'swim', dist: swim, time: swimT }); }
+  if (swim > 0 || swimT > 0) { items.push({ kind: 'swim', name: 'Swim', detail: `${swim ? `${Math.round(miToYd(swim))} yd` : ''}${swimT ? `${swim ? ' · ' : ''}${fmtDuration(swimT)}` : ''}`, group: 'Cardio' }); lines.push('Swam'); cardio.push({ kind: 'swim', dist: swim, time: swimT }); }
   const title = groups.size ? Array.from(groups).slice(0, 3).join(' · ') : (items.length ? 'Workout' : '');
   return { title, items, lines, exercises: rec.exercises ?? '[]', liftCount: lifts.length, setCount, volume: Math.round(volume), cardio, hasContent: items.length > 0 };
 }

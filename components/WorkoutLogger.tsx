@@ -33,7 +33,7 @@ import { AutoCropImage } from '@/components/AutoCropImage';
 import { ShareWorkoutPrompt } from '@/components/social/ShareWorkoutPrompt';
 import { ExerciseHistoryModal } from '@/components/ExerciseHistory';
 import { parseEx, serializeEx, normalizeSets, applyLoggedSet } from '@/lib/exerciseSerial';
-import { useUnits } from '@/lib/units';
+import { useUnits, parseDurationToMin, fmtDuration } from '@/lib/units';
 import { useRestTimer, DEFAULT_REST_MS } from '@/lib/RestTimerContext';
 import { SessionRatingModal } from '@/components/workout/SessionRatingModal';
 import { trackEvent } from '@/lib/telemetry';
@@ -169,9 +169,12 @@ const CARDIO_CFG: Record<CardioKind, {
   f2: string; f2ph: string; f2mode: React.HTMLInputTypeAttribute;
   notePh: string;
 }> = {
-  swim: { code: 'SWIM', label: 'Swimming', f1: 'DURATION / MIN', f1ph: '45',  f1mode: 'numeric', f2: 'DIST / MI', f2ph: '1.0',      f2mode: 'decimal', notePh: 'drills, laps, style…' },
-  run:  { code: 'RUN',  label: 'Running',  f1: 'DISTANCE / MI', f1ph: '5.2', f1mode: 'decimal', f2: 'TIME / MIN', f2ph: '45',       f2mode: 'numeric', notePh: 'pace, route, effort…' },
-  bike: { code: 'BIKE', label: 'Cycling',  f1: 'DISTANCE / MI', f1ph: '20',  f1mode: 'decimal', f2: 'TIME / MIN', f2ph: '60',       f2mode: 'numeric', notePh: 'route, watts, HR zone…' },
+  // Duration fields accept "h:mm:ss", "mm:ss", or plain minutes (parsed at the
+  // UI edge; storage stays decimal minutes). Swim distance is entered in pool
+  // units — yards (imperial) / meters (metric) — storage stays miles.
+  swim: { code: 'SWIM', label: 'Swimming', f1: 'DURATION', f1ph: '45:00',  f1mode: 'text',    f2: 'DIST / YD', f2ph: '1000',   f2mode: 'numeric', notePh: 'drills, laps, style…' },
+  run:  { code: 'RUN',  label: 'Running',  f1: 'DISTANCE / MI', f1ph: '5.2', f1mode: 'decimal', f2: 'TIME', f2ph: '45:00',    f2mode: 'text',    notePh: 'pace, route, effort…' },
+  bike: { code: 'BIKE', label: 'Cycling',  f1: 'DISTANCE / MI', f1ph: '20',  f1mode: 'decimal', f2: 'TIME', f2ph: '1:00:00',  f2mode: 'text',    notePh: 'route, watts, HR zone…' },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -499,31 +502,65 @@ function CardioEntryCard({
   // The DISTANCE field stays canonical (miles) in entry. We render it from local
   // display state so metric users can type decimals (km) without round-trip jank,
   // and write canonical miles back to the entry live so persist/commit always
-  // has the real value. swim's distance is f2/v2; run & bike use f1/v1.
-  const distField: 'v1' | 'v2' = entry.k === 'swim' ? 'v2' : 'v1';
+  // has the real value. swim's distance is f2/v2; run & bike use f1/v1 — and
+  // swim distances display/enter in POOL units (yd / m), not mi/km.
+  const isSwim = entry.k === 'swim';
+  const distField: 'v1' | 'v2' = isSwim ? 'v2' : 'v1';
   const distStored = entry[distField] ?? '';
+  const dispDist = (mi: number) => (isSwim ? u.dispSwimDistance(mi) : u.dispDistance(mi));
+  const toStoredDist = (v: number) => (isSwim ? u.toStoredSwimDistance(v) : u.toStoredDistance(v));
   const [distInput, setDistInput] = useState('');
   const lastDistWrite = useRef<string | null>(null);
   // Reseed on EXTERNAL change (preset load, undo) — but not our own live write.
   useEffect(() => {
     if (distStored === (lastDistWrite.current ?? '')) return;
-    setDistInput(distStored ? u.dispDistance(parseFloat(String(distStored))) : '');
+    setDistInput(distStored ? dispDist(parseFloat(String(distStored))) : '');
   }, [distStored]); // eslint-disable-line react-hooks/exhaustive-deps
   // Always reseed when the unit system flips (canonical entry is unchanged).
   useEffect(() => {
-    setDistInput(distStored ? u.dispDistance(parseFloat(String(distStored))) : '');
+    setDistInput(distStored ? dispDist(parseFloat(String(distStored))) : '');
     lastDistWrite.current = distStored ? String(distStored) : null;
   }, [u.system]); // eslint-disable-line react-hooks/exhaustive-deps
   const onDistChange = (val: string) => {
     setDistInput(val);
-    const mi = val.trim() ? String(u.toStoredDistance(parseFloat(val) || 0)) : '';
+    const mi = val.trim() ? String(toStoredDist(parseFloat(val) || 0)) : '';
     lastDistWrite.current = mi;
     onUpdateField(entry._idx, distField, mi);
   };
-  /** Cardio field label with MI swapped for the user's distance unit. */
-  const unitLabel = (raw: string) => raw.replace(/MI$/i, u.distanceUnit.toUpperCase());
+  /** Cardio field label with the unit suffix swapped for the user's system —
+   *  MI → mi/km for run & bike, YD → yd/m for swim. */
+  const unitLabel = (raw: string) => raw
+    .replace(/MI$/i, u.distanceUnit.toUpperCase())
+    .replace(/YD$/i, u.swimDistanceUnit.toUpperCase());
   const f1IsDist = distField === 'v1';
   const f2IsDist = distField === 'v2';
+
+  // The DURATION field mirrors the same pattern: entry stays canonical decimal
+  // minutes; the input shows/accepts "h:mm:ss", "mm:ss", or plain minutes.
+  const durField: 'v1' | 'v2' = isSwim ? 'v1' : 'v2';
+  const durStored = entry[durField] ?? '';
+  const [durInput, setDurInput] = useState('');
+  const lastDurWrite = useRef<string | null>(null);
+  useEffect(() => {
+    if (durStored === (lastDurWrite.current ?? '')) return;
+    const n = parseFloat(String(durStored));
+    setDurInput(durStored && Number.isFinite(n) && n > 0 ? fmtDuration(n) : '');
+  }, [durStored]); // eslint-disable-line react-hooks/exhaustive-deps
+  const onDurChange = (val: string) => {
+    setDurInput(val);
+    if (!val.trim()) { lastDurWrite.current = ''; onUpdateField(entry._idx, durField, ''); return; }
+    const min = parseDurationToMin(val);
+    if (min === null) return; // mid-typing ("42:") — keep the last valid stored value
+    const stored = String(+min.toFixed(2));
+    lastDurWrite.current = stored;
+    onUpdateField(entry._idx, durField, stored);
+  };
+  const onDurBlur = () => {
+    // Normalize the display to h:mm:ss so "90" reads back as "1:30:00".
+    const n = parseFloat(String(lastDurWrite.current ?? durStored));
+    if (Number.isFinite(n) && n > 0) setDurInput(fmtDuration(n));
+    onCommit();
+  };
 
   return (
     <div className="rounded border border-[var(--line)] bg-[var(--bg-2)] px-4 py-4 relative overflow-hidden">
@@ -564,18 +601,18 @@ function CardioEntryCard({
           <label className="que-label">{f1IsDist ? unitLabel(cfg.f1) : cfg.f1}</label>
           <input
             type="text" inputMode={cfg.f1mode as React.HTMLAttributes<HTMLInputElement>['inputMode']}
-            className="que-input" value={f1IsDist ? distInput : (entry.v1 ?? '')} placeholder={cfg.f1ph}
-            onChange={e => f1IsDist ? onDistChange(e.target.value) : onUpdateField(entry._idx, 'v1', e.target.value)}
-            onBlur={onCommit}
+            className="que-input" value={f1IsDist ? distInput : durInput} placeholder={cfg.f1ph}
+            onChange={e => f1IsDist ? onDistChange(e.target.value) : onDurChange(e.target.value)}
+            onBlur={f1IsDist ? onCommit : onDurBlur}
           />
         </div>
         <div>
           <label className="que-label">{f2IsDist ? unitLabel(cfg.f2) : cfg.f2}</label>
           <input
             type="text" inputMode={cfg.f2mode as React.HTMLAttributes<HTMLInputElement>['inputMode']}
-            className="que-input" value={f2IsDist ? distInput : (entry.v2 ?? '')} placeholder={cfg.f2ph}
-            onChange={e => f2IsDist ? onDistChange(e.target.value) : onUpdateField(entry._idx, 'v2', e.target.value)}
-            onBlur={onCommit}
+            className="que-input" value={f2IsDist ? distInput : durInput} placeholder={cfg.f2ph}
+            onChange={e => f2IsDist ? onDistChange(e.target.value) : onDurChange(e.target.value)}
+            onBlur={f2IsDist ? onCommit : onDurBlur}
           />
         </div>
       </div>
