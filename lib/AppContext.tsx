@@ -409,9 +409,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Pull the cloud snapshot and merge it into local state + localStorage. Runs
   // on mount, and can be called again — e.g. after a Garmin sync pushes new
-  // cardio server-side — to surface remote changes without a reload. Per-field
-  // newer-wins (lib/dayMerge); days edited THIS session (dirtyDaysRef) are never
-  // overwritten. Failures are silent (localStorage stays the fallback).
+  // cardio server-side — to surface remote changes without a reload.
+  //
+  // Per-FIELD newer-wins (lib/dayMerge) — INCLUDING days edited this session.
+  // The old dirtyDaysRef skip predates field-level merge: back when the pull was
+  // whole-day "remote wins", touching a dirty day could clobber unsynced local
+  // edits, so dirty days were skipped entirely. With per-field LWW that skip is
+  // obsolete and actively harmful: every local edit stamps _fieldEditedAt, so a
+  // dirty day's own fields always beat the server's older copies — while fields
+  // the server just wrote (a Garmin cardio import, a cron step push) merge in.
+  // Skipping meant "log any lift today and today's imported cardio stays
+  // invisible until an app restart". Failures are silent (localStorage is the
+  // fallback).
   const refreshFromCloud = useCallback(async () => {
     const remote = await pullFromCloud().catch(() => null);
     if (!remote) return;
@@ -428,7 +437,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setLocalDB(prev => {
         const next: Record<string, DayRecord> = { ...prev };
         for (const [date, remoteData] of Object.entries(remoteDB)) {
-          if (dirtyDaysRef.current.has(date)) continue;
           next[date] = mergeRemote(
             prev[date] as Record<string, unknown> | undefined,
             remoteData as Record<string, unknown>,
@@ -440,7 +448,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const local = JSON.parse(localStorage.getItem(DB_KEY) ?? '{}') as Record<string, unknown>;
         const merged: Record<string, unknown> = { ...local };
         for (const [date, remoteData] of Object.entries(remoteDB)) {
-          if (dirtyDaysRef.current.has(date)) continue;
           merged[date] = mergeRemote(
             local[date] as Record<string, unknown> | undefined,
             remoteData as Record<string, unknown>,
