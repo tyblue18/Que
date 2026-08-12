@@ -117,7 +117,15 @@ export function gatherSettings(): Record<string, unknown> {
 export function restoreSettings(settings: Record<string, unknown>): void {
   if (typeof window === 'undefined') return;
   for (const [key, val] of Object.entries(settings)) {
-    if (val === null || val === undefined) continue;
+    if (val === undefined) continue;
+    // null is a DELETION TOMBSTONE (e.g. a discarded lifting program / training
+    // block): remove the local copy so the discard propagates across devices.
+    // Skipping nulls (the old behavior) left this device's stale copy in place,
+    // and its next push resurrected the plan the user had discarded.
+    if (val === null) {
+      try { localStorage.removeItem(key); } catch { /* ignore */ }
+      continue;
+    }
     try {
       const str = typeof val === 'string' ? val : JSON.stringify(val);
       localStorage.setItem(key, str);

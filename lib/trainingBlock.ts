@@ -879,9 +879,16 @@ export function loadActiveTrainingBlock(): TrainingBlock | null {
 export function writeTrainingBlock(block: TrainingBlock | null): void {
   if (typeof window === 'undefined') return;
   try {
-    if (block) localStorage.setItem(TRAINING_BLOCK_KEY, JSON.stringify(block));
-    else localStorage.removeItem(TRAINING_BLOCK_KEY);
+    // Discard writes an explicit 'null' TOMBSTONE, never removeItem: this key
+    // syncs via SETTINGS_KEYS, and an absent key is omitted from the push — the
+    // server would keep the old block and the next cloud pull would resurrect
+    // the "discarded" plan. 'null' parses back to null in loadTrainingBlock and
+    // pushes as null, which restoreSettings deletes on other devices.
+    localStorage.setItem(TRAINING_BLOCK_KEY, block ? JSON.stringify(block) : 'null');
   } catch {
     /* quota */
   }
+  // Propagate save AND discard promptly (debounced) instead of waiting for the
+  // next unrelated day-edit to carry the settings snapshot.
+  void import('@/lib/syncEngine').then(m => m.queueSync({ settings: m.gatherSettings() })).catch(() => {});
 }

@@ -6,6 +6,7 @@ import { Dumbbell, ChevronDown, Plus, RotateCcw, Check, ArrowRight, Target, Beef
 import { useApp } from '@/lib/AppContext';
 import { useUnits, lbToKg } from '@/lib/units';
 import { LIFTING_PROGRAM_KEY, LIFT_PRS_KEY } from '@/lib/constants';
+import { queueSync, gatherSettings } from '@/lib/syncEngine';
 import {
   generateProgram, computeWeeklyVolume,
   type LiftingProgram, type ProgramDay, type LiftGoal, type LiftExperience,
@@ -79,9 +80,14 @@ export default function LiftingPlanBuilder({ bare = false }: { bare?: boolean } 
   const persist = useCallback((p: LiftingProgram | null) => {
     setProgram(p);
     try {
-      if (p) localStorage.setItem(LIFTING_PROGRAM_KEY, JSON.stringify(p));
-      else   localStorage.removeItem(LIFTING_PROGRAM_KEY);
+      // Discard writes an explicit 'null' TOMBSTONE, never removeItem: this key
+      // syncs via SETTINGS_KEYS, and an absent key is simply omitted from the
+      // push — the server would keep the old program and the next cloud pull
+      // would resurrect the "discarded" plan. The tombstone pushes as null,
+      // which the server stores and restoreSettings deletes on other devices.
+      localStorage.setItem(LIFTING_PROGRAM_KEY, p ? JSON.stringify(p) : 'null');
     } catch { /* storage full / unavailable — keep in-memory copy */ }
+    queueSync({ settings: gatherSettings() }); // propagate save AND discard promptly
   }, []);
 
   const build = useCallback(() => {
