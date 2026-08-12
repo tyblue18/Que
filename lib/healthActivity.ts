@@ -141,9 +141,51 @@ export function applyActivity(
     touched.push('garminKcal', 'burn');
   }
 
+  // Mirror the ledger into the serialized `exercises[]` array — the AUTHORITATIVE
+  // store the calendar / workout log reads (lib/cardioSync). Without this the
+  // imported cardio shows in the budget and charts but is invisible on the
+  // calendar. Imported entries carry `gid` (the externalId) so a re-send
+  // REPLACES them; manual entries (no gid) are never touched.
+  const rebuilt = rebuildExercises(existing.exercises, ledger);
+  if (rebuilt !== null) {
+    data.exercises = rebuilt;
+    touched.push('exercises');
+  }
+
   data._fieldEditedAt = stampEditedFields(existing, touched, nowIso);
   data._editedAt = nowIso;
   return { data, changed: true };
+}
+
+/** Imported-entry shape inside the exercises array (matches WorkoutLogger's
+ *  cardio convention: run/bike v1=dist, v2=time; swim v1=time, v2=dist). */
+interface ImportedEntry { k: string; v1: string; v2: string; gid: string }
+
+/**
+ * Replace all `gid`-marked entries with fresh ones from the ledger, preserving
+ * every manual entry (lifts, text, un-marked cardio). Returns the re-serialized
+ * string, or null when the existing blob is an unparseable legacy format —
+ * safer to leave it untouched than to destroy what's there.
+ */
+function rebuildExercises(raw: unknown, ledger: Record<string, GarminAct>): string | null {
+  let entries: Record<string, unknown>[] = [];
+  const s = String(raw ?? '');
+  if (s) {
+    try {
+      const parsed = JSON.parse(s);
+      if (!Array.isArray(parsed)) return null;
+      entries = parsed as Record<string, unknown>[];
+    } catch { return null; } // legacy newline-text blob — do not touch
+  }
+  const manual = entries.filter(e => !(e && typeof e === 'object' && 'gid' in e));
+  const imported: ImportedEntry[] = Object.entries(ledger).map(([gid, a]) => {
+    const dist = a.distMi > 0 ? String(a.distMi) : '';
+    const time = String(a.timeMin);
+    return a.type === 'swim'
+      ? { k: 'swim', v1: time, v2: dist, gid }
+      : { k: a.type, v1: dist, v2: time, gid };
+  });
+  return JSON.stringify([...manual, ...imported]);
 }
 
 /** Fallback for a source with no stable id: can't dedup, so accumulate once. */

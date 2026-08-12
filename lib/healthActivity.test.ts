@@ -154,6 +154,43 @@ describe('applyActivity — measured calories', () => {
   });
 });
 
+describe('applyActivity — exercises[] mirroring (calendar visibility)', () => {
+  it('writes an imported ride into the exercises array with a gid marker', () => {
+    const { data } = applyActivity({}, { type: 'bike', distanceMi: 6.47, timeMin: 31.9, calories: 184, externalId: 'g1' }, NOW);
+    const ex = JSON.parse(String(data.exercises)) as Array<Record<string, string>>;
+    expect(ex).toEqual([{ k: 'bike', v1: '6.47', v2: '31.9', gid: 'g1' }]);
+  });
+
+  it('preserves manual entries (lifts + unmarked cardio) and replaces on re-send', () => {
+    const existing = { exercises: JSON.stringify([
+      { k: 'lift', g: 'Chest', n: 'Bench Press', sets: [{ r: '10', w: '135' }] },
+      { k: 'run', v1: '3', v2: '25' }, // manual run — no gid
+    ]) };
+    const first = applyActivity(existing, { type: 'bike', distanceMi: 20, timeMin: 60, externalId: 'g2' }, NOW).data;
+    // Corrected re-send replaces the gid entry rather than appending a second one.
+    const second = applyActivity(first, { type: 'bike', distanceMi: 21, timeMin: 62, externalId: 'g2' }, NOW).data;
+    const ex = JSON.parse(String(second.exercises)) as Array<Record<string, unknown>>;
+    expect(ex).toHaveLength(3);
+    expect(ex.filter(e => e.gid)).toHaveLength(1);
+    expect(ex.find(e => e.gid)).toMatchObject({ k: 'bike', v1: '21', v2: '62' });
+    expect(ex.find(e => e.k === 'lift')).toBeTruthy();
+    expect(ex.find(e => e.k === 'run' && !e.gid)).toBeTruthy();
+  });
+
+  it('swim entries use the v1=time, v2=dist convention', () => {
+    const { data } = applyActivity({}, { type: 'swim', distanceMi: 0.54, timeMin: 19.6, calories: 149, externalId: 'g3' }, NOW);
+    const ex = JSON.parse(String(data.exercises)) as Array<Record<string, string>>;
+    expect(ex[0]).toEqual({ k: 'swim', v1: '19.6', v2: '0.54', gid: 'g3' });
+  });
+
+  it('leaves a legacy newline-text exercises blob untouched', () => {
+    const existing = { exercises: 'Bench 3x10\nSquat 5x5' };
+    const { data } = applyActivity(existing, { type: 'run', distanceMi: 3, timeMin: 25, externalId: 'g4' }, NOW);
+    expect(data.exercises).toBe('Bench 3x10\nSquat 5x5'); // not destroyed
+    expect(data.runDist).toBe(3); // top-level fields still written
+  });
+});
+
 describe('applyActivity — merge safety', () => {
   it('stamps only the touched fields and preserves unrelated same-day data', () => {
     const existing = { weight: '180', foods: '[]', _editedAt: '2026-08-06T06:00:00.000Z' };
