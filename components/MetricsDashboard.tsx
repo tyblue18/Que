@@ -1624,12 +1624,15 @@ export default function MetricsDashboard({ openProfileSignal = 0 }: { openProfil
     if (!isLoaded) return;
     const rec = activeDayRec ?? {};
     setCardio({
-      steps:    String(rec.steps    ?? 0),
-      runDist:  String(rec.runDist  ?? 0),
-      runTime:  String(rec.runTime  ?? 0),
-      bikeDist: String(rec.bikeDist ?? 0),
-      bikeTime: String(rec.bikeTime ?? 0),
-      swimTime: String(rec.swimTime ?? 0),
+      steps:      String(rec.steps    ?? 0),
+      runDist:    String(rec.runDist  ?? 0),
+      runTime:    String(rec.runTime  ?? 0),
+      bikeDist:   String(rec.bikeDist ?? 0),
+      bikeTime:   String(rec.bikeTime ?? 0),
+      swimTime:   String(rec.swimTime ?? 0),
+      // Measured Garmin calories supersede the estimate (fixes the cardio card
+      // + burn breakdown reading low, matching the calorie budget).
+      garminKcal: String(rec.garminKcal ?? 0),
     });
   }, [isLoaded, activeDayFocus, activeDayRec]);
 

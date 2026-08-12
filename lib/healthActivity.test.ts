@@ -116,6 +116,31 @@ describe('applyActivity — measured calories', () => {
     const again = applyActivity(res.data, { type: 'bike', distanceMi: 20, timeMin: 60, calories: 465, externalId: 'x' }, NOW);
     expect(again.changed).toBe(false);
   });
+
+  it('re-send does NOT double distance/time (idempotent aggregates)', () => {
+    const first = applyActivity({}, { type: 'bike', distanceMi: 50.24, timeMin: 230, calories: 1331, externalId: 'g' }, NOW).data;
+    expect(first.bikeDist).toBe(50.24);
+    expect(first.bikeTime).toBe(230);
+    expect(first.garminKcal).toBe(1331);
+    const second = applyActivity(first, { type: 'bike', distanceMi: 50.24, timeMin: 230, calories: 1331, externalId: 'g' }, NOW);
+    expect(second.changed).toBe(false);
+    expect(second.data.bikeDist).toBe(50.24); // NOT 100.48
+  });
+
+  it('re-send with a corrected value REPLACES (fixes a doubled distance)', () => {
+    const doubled = applyActivity({}, { type: 'bike', distanceMi: 100, timeMin: 400, externalId: 'h' }, NOW).data;
+    expect(doubled.bikeDist).toBe(100);
+    const fixed = applyActivity(doubled, { type: 'bike', distanceMi: 50, timeMin: 200, externalId: 'h' }, NOW).data;
+    expect(fixed.bikeDist).toBe(50);   // corrected, not 150
+    expect(fixed.bikeTime).toBe(200);
+  });
+
+  it('leaves a manually-logged cardio of a different type untouched', () => {
+    const existing = { runDist: '5', runTime: '40' }; // manual run
+    const { data } = applyActivity(existing, { type: 'bike', distanceMi: 20, timeMin: 60, externalId: 'b1' }, NOW);
+    expect(data.runDist).toBe('5');   // manual run survives
+    expect(data.bikeDist).toBe(20);
+  });
 });
 
 describe('applyActivity — merge safety', () => {
