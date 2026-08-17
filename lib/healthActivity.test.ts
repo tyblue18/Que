@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { applyActivity, toMiles, FIELD_MAP } from '@/lib/healthActivity';
+import { applyActivity, applyWellness, toMiles, FIELD_MAP } from '@/lib/healthActivity';
 
 const NOW = '2026-08-06T12:00:00.000Z';
 
@@ -222,6 +222,45 @@ describe('applyActivity — merge safety', () => {
     expect(data._fieldEditedAt?.runTime).toBe(NOW);
     expect(data._fieldEditedAt?.weight).toBe('2026-08-06T06:00:00.000Z');
     expect(data._editedAt).toBe(NOW);
+  });
+});
+
+describe('applyWellness', () => {
+  it('writes provided metrics, weight as a lb string, and stamps them', () => {
+    const { data, changed } = applyWellness({}, {
+      steps: 9200, weightLb: 180.44, restingHr: 47.4, hrv: 62, sleepScore: 81, sleepMin: 442, bodyBattery: 88,
+    }, NOW);
+    expect(changed).toBe(true);
+    expect(data.steps).toBe(9200);
+    expect(data.weight).toBe('180.4');          // string, matches the manual weigh-in shape
+    expect(data.restingHr).toBe(47);
+    expect(data.hrv).toBe(62);
+    expect(data.sleepScore).toBe(81);
+    expect(data.sleepMin).toBe(442);
+    expect(data.bodyBattery).toBe(88);
+    expect(data._fieldEditedAt?.weight).toBe(NOW);
+    expect(data._fieldEditedAt?.hrv).toBe(NOW);
+  });
+
+  it('is a no-op when nothing changed (stamps preserved for the merge)', () => {
+    const first = applyWellness({}, { steps: 9200, restingHr: 47 }, NOW).data;
+    const again = applyWellness(first, { steps: 9200, restingHr: 47 }, '2026-08-06T18:00:00.000Z');
+    expect(again.changed).toBe(false);
+    expect(again.data).toBe(first);             // unchanged reference, no stamp refresh
+  });
+
+  it('updates only the fields that changed and leaves the rest untouched', () => {
+    const first = applyWellness({ foods: '[]' }, { steps: 5000, hrv: 60 }, NOW).data;
+    const later = applyWellness(first, { steps: 9200, hrv: 60 }, '2026-08-06T18:00:00.000Z').data;
+    expect(later.steps).toBe(9200);
+    expect(later._fieldEditedAt?.steps).toBe('2026-08-06T18:00:00.000Z');
+    expect(later._fieldEditedAt?.hrv).toBe(NOW); // unchanged → original stamp kept
+    expect(later.foods).toBe('[]');
+  });
+
+  it('ignores absent, zero-steps, and implausible values', () => {
+    const { changed } = applyWellness({}, { steps: 0, weightLb: 5 }, NOW);
+    expect(changed).toBe(false);
   });
 });
 

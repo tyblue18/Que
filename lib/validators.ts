@@ -211,6 +211,24 @@ export const healthActivitySchema = z.object({
   externalId: z.string().min(1).max(128).optional(),         // stable workout id → idempotent re-sends
 });
 
+// ── /api/health/wellness POST (daily wellness from the user's own device) ──────
+// All metrics optional (a push carries whatever Garmin has); at least one must
+// be present. Bounds double as outlier guards. weightLb is canonical pounds.
+export const healthWellnessSchema = z.object({
+  date:        dateString.optional(),                    // defaults to user's local today
+  steps:       z.number().int().min(0).max(200_000).optional(),
+  weightLb:    z.number().min(40).max(1500).optional(),
+  restingHr:   z.number().min(20).max(150).optional(),
+  hrv:         z.number().min(1).max(400).optional(),
+  sleepScore:  z.number().min(0).max(100).optional(),
+  sleepMin:    z.number().min(0).max(1440).optional(),
+  bodyBattery: z.number().min(0).max(100).optional(),
+}).refine(
+  d => [d.steps, d.weightLb, d.restingHr, d.hrv, d.sleepScore, d.sleepMin, d.bodyBattery]
+    .some(v => typeof v === 'number'),
+  { message: 'At least one wellness metric is required' },
+);
+
 // ── /api/datatracker POST (connect a self-hosted Garmin data_tracker) ──────────
 // baseUrl is further validated + SSRF-guarded in lib/dataTracker.normalizeTrackerUrl.
 export const dataTrackerConnectSchema = z.object({

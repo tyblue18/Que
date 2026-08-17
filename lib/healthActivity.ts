@@ -199,6 +199,68 @@ function rebuildExercises(raw: unknown, ledger: Record<string, GarminAct>): stri
   return JSON.stringify([...manual, ...imported]);
 }
 
+// ── Daily wellness import (steps, weight, recovery metrics) ──────────────────
+
+/** One day's wellness snapshot from the device (all fields optional — a push
+ *  carries whatever Garmin has for that day). Weight is in POUNDS (canonical). */
+export interface WellnessData {
+  steps?:       number;
+  weightLb?:    number;
+  restingHr?:   number;  // bpm
+  hrv?:         number;  // overnight avg, ms
+  sleepScore?:  number;  // 0–100
+  sleepMin?:    number;  // total sleep, minutes
+  bodyBattery?: number;  // daily high, 0–100
+}
+
+/**
+ * Merge a day's wellness metrics into its `data`. PURE + non-mutating.
+ *
+ * Unlike activities there is no per-workout identity — each metric is a daily
+ * scalar, so the rule is simply: write the fields the push carries, but ONLY
+ * when the value actually changed (derived-state no-op, like applyActivity).
+ * That idempotency matters doubly here: wellness re-pushes on every sync, and
+ * refreshing the per-field stamps on unchanged values would let an idle re-sync
+ * beat a genuine manual edit (e.g. a hand-corrected weight) in the merge.
+ */
+export function applyWellness(
+  existing: MergeableDay,
+  w: WellnessData,
+  nowIso: string,
+): { data: MergeableDay; changed: boolean } {
+  const data: MergeableDay = { ...existing };
+  const touched: string[] = [];
+
+  const setNum = (field: string, value: number | undefined, min: number) => {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < min) return;
+    const rounded = Math.round(value);
+    if (num(existing[field]) === rounded && existing[field] !== undefined) return;
+    data[field] = rounded;
+    touched.push(field);
+  };
+
+  setNum('steps',       w.steps,       1);
+  setNum('restingHr',   w.restingHr,   1);
+  setNum('hrv',         w.hrv,         1);
+  setNum('sleepScore',  w.sleepScore,  1);
+  setNum('sleepMin',    w.sleepMin,    1);
+  setNum('bodyBattery', w.bodyBattery, 1);
+
+  // Weight is stored as a STRING in lb (matches the manual weigh-in path).
+  if (typeof w.weightLb === 'number' && Number.isFinite(w.weightLb) && w.weightLb > 20) {
+    const str = w.weightLb.toFixed(1);
+    if (String(existing.weight ?? '') !== str) {
+      data.weight = str;
+      touched.push('weight');
+    }
+  }
+
+  if (touched.length === 0) return { data: existing, changed: false };
+  data._fieldEditedAt = stampEditedFields(existing, touched, nowIso);
+  data._editedAt = nowIso;
+  return { data, changed: true };
+}
+
 /** Fallback for a source with no stable id: can't dedup, so accumulate once. */
 function accumulateNoId(
   existing: MergeableDay,

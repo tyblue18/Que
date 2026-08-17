@@ -111,6 +111,13 @@ export interface DayRecord {
   garminRunKcal?:  number;
   garminBikeKcal?: number;
   garminSwimKcal?: number;
+  /** Daily wellness from a Garmin sync (see lib/healthActivity applyWellness).
+   *  Read by the Metrics tab's Recovery panel. */
+  restingHr?:   number;  // bpm
+  hrv?:         number;  // overnight avg, ms
+  sleepScore?:  number;  // 0–100
+  sleepMin?:    number;  // total sleep, minutes
+  bodyBattery?: number;  // daily high, 0–100
   budget?:   number;
   /** TDEE (BMR × activity multiplier) snapshotted at log time. Deficit- and
    *  cardio-independent, so plan-progress maintenance reconstructs exactly as

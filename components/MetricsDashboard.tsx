@@ -34,6 +34,7 @@ import { useUnits, kgToLb, cmToIn, parseDurationToMin, fmtDuration } from '@/lib
 import { Measurements } from '@/components/metrics/Measurements';
 import { ProgressPhoto } from '@/components/metrics/ProgressPhoto';
 import { DataTrackerPanel } from '@/components/metrics/DataTrackerPanel';
+import { RecoveryPanel } from '@/components/metrics/RecoveryPanel';
 import {
   MilestoneModal, CelebrationModal, PlanProgressModal, PlanModal, ProjectionModal, PlanHistoryModal,
 } from '@/components/metrics/MetricsModals';
@@ -471,6 +472,7 @@ function ProfilePanel({ profile, onChange, onOpenPlan, onOpenRunPlan, onOpenLift
         <ProgressPhoto />
 
         <StepSyncPanel />
+        <RecoveryPanel />
         <DataTrackerPanel />
       </div>
     </div>
@@ -549,7 +551,7 @@ function CalorieBudgetCard({ m, onOpenProgress, prFlags }: {
     const rec = getDayRecord(activeDayFocus) as { exercises?: unknown };
     const entries = parseExercises(rec.exercises);
     const next = setCardioOfKind(entries, kind, distanceMi, durationMin);
-    const derived = deriveCardioFields(next, profile);
+    const derived = deriveCardioFields(next, profile, rec as Parameters<typeof deriveCardioFields>[2]);
     updateDayRecord(activeDayFocus, { exercises: JSON.stringify(next), ...derived } as Parameters<typeof updateDayRecord>[1]);
   }, [activeDayFocus, updateDayRecord, getDayRecord, profile]);
 

@@ -1032,8 +1032,10 @@ export default function WorkoutLogger() {
       // Mark this as our own write so the external-change detector ignores it.
       lastOwnWriteRef.current = raw;
       // Derive the top-level cardio fields (+ burn) from the exercises array via
-      // the SHARED helper, so this and the Metrics quick-cardio modal can't drift.
-      const cardio = deriveCardioFields(arr, profile);
+      // the SHARED helper, so this and the Metrics quick-cardio modal can't
+      // drift. The day's existing record is passed so measured Garmin calories
+      // survive the edit (otherwise burn reverts to the estimate).
+      const cardio = deriveCardioFields(arr, profile, localDB[activeDayFocus]);
       updateDayRecord(activeDayFocus, {
         exercises: raw, notes: notesTxt,
         ...cardio,
@@ -1086,7 +1088,7 @@ export default function WorkoutLogger() {
       if (notesFlashRef.current) clearTimeout(notesFlashRef.current);
       notesFlashRef.current = setTimeout(() => setSaveFlash(false), 2000);
     },
-    [activeDayFocus, notes, updateDayRecord, profile]
+    [activeDayFocus, notes, updateDayRecord, profile, localDB]
   );
   const setExercises = useCallback((arr: ExerciseEntry[]) => {
     setExercisesRaw(arr); persistExercises(arr);

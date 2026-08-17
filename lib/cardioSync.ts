@@ -44,9 +44,27 @@ export interface DerivedCardioFields {
 const sum = (arr: ExerciseEntry[], key: 'v1' | 'v2'): number =>
   arr.reduce((s, e) => s + (parseFloat(String(e[key] ?? '0')) || 0), 0);
 
+/** Measured-calorie fields a day record may carry from a Garmin import — passed
+ *  through so an EDIT on such a day derives `burn` from the measured numbers
+ *  instead of silently reverting it to the distance/time estimate. */
+export interface MeasuredKcalFields {
+  garminKcal?:     number | string;
+  garminRunKcal?:  number | string;
+  garminBikeKcal?: number | string;
+  garminSwimKcal?: number | string;
+}
+
 /** Derive the top-level cardio fields (+ burn) from the exercises array. This is
- *  the SAME derivation WorkoutLogger applies on every write. */
-export function deriveCardioFields(entries: ExerciseEntry[], profile: UserProfile): DerivedCardioFields {
+ *  the SAME derivation WorkoutLogger applies on every write.
+ *
+ *  `measured` (the day's existing record) matters on Garmin-imported days:
+ *  without it, editing ANY cardio recomputed `burn` as the pure estimate and
+ *  clobbered the measured value the badge/battle/metrics layers read. */
+export function deriveCardioFields(
+  entries: ExerciseEntry[],
+  profile: UserProfile,
+  measured?: MeasuredKcalFields,
+): DerivedCardioFields {
   const runs  = entries.filter(e => e.k === 'run');
   const bikes = entries.filter(e => e.k === 'bike');
   const swims = entries.filter(e => e.k === 'swim');
@@ -58,6 +76,10 @@ export function deriveCardioFields(entries: ExerciseEntry[], profile: UserProfil
     runDist: String(runDist), runTime: String(runTime),
     bikeDist: String(bikeDist), bikeTime: String(bikeTime),
     swimTime: String(swimTime),
+    garminKcal:     String(measured?.garminKcal     ?? '0'),
+    garminRunKcal:  String(measured?.garminRunKcal  ?? '0'),
+    garminBikeKcal: String(measured?.garminBikeKcal ?? '0'),
+    garminSwimKcal: String(measured?.garminSwimKcal ?? '0'),
   }).activityBurn;
   return { runDist, runTime, bikeDist, bikeTime, swimTime, swimDist, burn };
 }

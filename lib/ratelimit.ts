@@ -47,6 +47,15 @@ export const activityLimit = new Ratelimit({
   prefix:  'rl:activity',
 });
 
+// 30 token-based wellness pushes per IP per minute. A sync re-pushes ~a week of
+// daily metrics each run (they change through the day), so this is roomier than
+// the activity bucket while still capping token brute-force.
+export const wellnessLimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(30, '1 m'),
+  prefix:  'rl:wellness',
+});
+
 // 20 data_tracker connect/status/metrics reads per user per minute — plenty for
 // the connect form + polling the metrics view, but caps probing of the
 // server-side URL fetch (SSRF surface).

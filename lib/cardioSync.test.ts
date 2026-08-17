@@ -78,6 +78,17 @@ describe('deriveCardioFields — top-level matches the array', () => {
     expect(d.runDist).toBe(0);
     expect(d.runTime).toBe(0);
   });
+
+  it('preserves measured Garmin calories in burn when editing an imported day', () => {
+    // Day imported from Garmin: bike 15mi/62min with MEASURED 465 kcal. The user
+    // edits (any cardio write re-derives) — burn must stay 465, not revert to
+    // the flat-physics estimate (~260).
+    const entries: ExerciseEntry[] = [{ k: 'bike', v1: '15', v2: '62' }];
+    const withMeasured = deriveCardioFields(entries, profile, { garminBikeKcal: 465 });
+    expect(withMeasured.burn).toBe(465);
+    const withoutMeasured = deriveCardioFields(entries, profile);
+    expect(withoutMeasured.burn).not.toBe(465); // estimate path still works
+  });
 });
 
 describe('existingCardioDistance — preserves swim distance on a time-only edit', () => {
