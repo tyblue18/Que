@@ -85,11 +85,13 @@ export function applyActivity(
 ): { data: MergeableDay; changed: boolean } {
   if (!act.externalId) return accumulateNoId(existing, act, nowIso);
 
-  const ledger: Record<string, GarminAct> = { ...((existing._garminActs as Record<string, GarminAct>) ?? {}) };
+  let ledger: Record<string, GarminAct> = { ...((existing._garminActs as Record<string, GarminAct>) ?? {}) };
   const prev = ledger[act.externalId];
   const next: GarminAct = {
     type:    act.type,
-    distMi:  +act.distanceMi.toFixed(2),
+    // A send WITHOUT a distance never erases a known one (Garmin omits distance
+    // on indoor rides; the value may have been adopted from a manual log below).
+    distMi:  act.distanceMi > 0 ? +act.distanceMi.toFixed(2) : (prev?.distMi ?? 0),
     timeMin: +act.timeMin.toFixed(1),
     // Keep the prior calories if this send omits them (e.g. a plain re-sync).
     kcal:    typeof act.calories === 'number' && act.calories > 0
@@ -101,6 +103,12 @@ export function applyActivity(
   // made at the END by comparing the DERIVED state against what's stored. An
   // input-based check silently skipped writing fields added by a later schema
   // (e.g. the per-type kcal sums), leaving old days permanently missing them.
+
+  // Rebuild the exercises mirror FIRST — it also ABSORBS manual duplicates of
+  // imported workouts and may adopt their distance into the ledger (see
+  // absorbAndRebuild), so the aggregates below must read the updated ledger.
+  const mirror = absorbAndRebuild(existing.exercises, ledger);
+  ledger = mirror.ledger;
 
   // Recompute per-type distance/time + total kcal from the WHOLE ledger.
   const agg: Record<string, number> = {};
@@ -141,13 +149,10 @@ export function applyActivity(
   }
 
   // Mirror the ledger into the serialized `exercises[]` array — the AUTHORITATIVE
-  // store the calendar / workout log reads (lib/cardioSync). Without this the
-  // imported cardio shows in the budget and charts but is invisible on the
-  // calendar. Imported entries carry `gid` (the externalId) so a re-send
-  // REPLACES them; manual entries (no gid) are never touched.
-  const rebuilt = rebuildExercises(existing.exercises, ledger);
-  if (rebuilt !== null) {
-    data.exercises = rebuilt;
+  // store the calendar / workout log reads (lib/cardioSync). Imported entries
+  // carry `gid` so a re-send REPLACES them; genuinely-manual entries survive.
+  if (mirror.rebuilt !== null) {
+    data.exercises = mirror.rebuilt;
     touched.push('exercises');
   }
 
@@ -172,31 +177,80 @@ export function applyActivity(
  *  cardio convention: run/bike v1=dist, v2=time; swim v1=time, v2=dist). */
 interface ImportedEntry { k: string; v1: string; v2: string; gid: string }
 
+// A manual entry matches an imported activity when durations agree within 20%
+// (or 3 min, whichever is larger); with no manual duration, distances within
+// 20%. [heuristic] — the same tolerance the one-time history cleanup used.
+const ABSORB_TOLERANCE = 0.2;
+const ABSORB_MIN_MIN   = 3;
+
 /**
- * Replace all `gid`-marked entries with fresh ones from the ledger, preserving
- * every manual entry (lifts, text, un-marked cardio). Returns the re-serialized
- * string, or null when the existing blob is an unparseable legacy format —
- * safer to leave it untouched than to destroy what's there.
+ * Rebuild the exercises mirror from the ledger, ABSORBING manual duplicates:
+ *
+ *   • `gid`-marked entries are replaced with fresh ones from the ledger.
+ *   • A MANUAL cardio entry that matches an imported activity (same type,
+ *     duration within tolerance) is removed — it's near-certainly the user's
+ *     hand-log of the same workout, made before the import arrived. Without
+ *     this the day shows the workout twice and an edit double-counts it (the
+ *     bug the one-time history cleanup fixed; this stops it recurring).
+ *   • When the absorbed manual entry has a distance the import lacks (indoor
+ *     rides), the manual distance is ADOPTED into the ledger — the user's
+ *     typed number is better data than Garmin's blank.
+ *   • Lifts, text entries, and non-matching manual cardio are never touched.
+ *
+ * Returns the re-serialized string plus the (possibly updated) ledger — or
+ * rebuilt:null when the blob is an unparseable legacy format (left untouched).
  */
-function rebuildExercises(raw: unknown, ledger: Record<string, GarminAct>): string | null {
+function absorbAndRebuild(
+  raw: unknown,
+  ledger: Record<string, GarminAct>,
+): { rebuilt: string | null; ledger: Record<string, GarminAct> } {
   let entries: Record<string, unknown>[] = [];
   const s = String(raw ?? '');
   if (s) {
     try {
       const parsed = JSON.parse(s);
-      if (!Array.isArray(parsed)) return null;
+      if (!Array.isArray(parsed)) return { rebuilt: null, ledger };
       entries = parsed as Record<string, unknown>[];
-    } catch { return null; } // legacy newline-text blob — do not touch
+    } catch { return { rebuilt: null, ledger }; } // legacy text blob — do not touch
   }
-  const manual = entries.filter(e => !(e && typeof e === 'object' && 'gid' in e));
-  const imported: ImportedEntry[] = Object.entries(ledger).map(([gid, a]) => {
+
+  const outLedger = { ...ledger };
+  const usedGids = new Set<string>();
+  const keep: Record<string, unknown>[] = [];
+  for (const e of entries) {
+    if (!e || typeof e !== 'object' || 'gid' in e) continue; // imported → rebuilt below
+    const kind = String(e.k ?? '');
+    if (kind !== 'run' && kind !== 'bike' && kind !== 'swim') { keep.push(e); continue; }
+    const mDur  = kind === 'swim' ? num(e.v1) : num(e.v2);
+    const mDist = kind === 'swim' ? num(e.v2) : num(e.v1);
+    const matchGid = Object.keys(outLedger).find(gid => {
+      const a = outLedger[gid];
+      if (a.type !== kind || usedGids.has(gid)) return false;
+      if (mDur > 0 && a.timeMin > 0)
+        return Math.abs(mDur - a.timeMin) <= Math.max(a.timeMin * ABSORB_TOLERANCE, ABSORB_MIN_MIN);
+      if (mDist > 0 && a.distMi > 0)
+        return Math.abs(mDist - a.distMi) <= a.distMi * ABSORB_TOLERANCE;
+      return false;
+    });
+    if (matchGid) {
+      usedGids.add(matchGid);
+      const a = outLedger[matchGid];
+      if (a.distMi <= 0 && mDist > 0) {
+        outLedger[matchGid] = { ...a, distMi: +mDist.toFixed(2) }; // adopt the typed distance
+      }
+      continue; // absorbed — the imported entry represents this workout now
+    }
+    keep.push(e); // genuinely separate manual workout
+  }
+
+  const imported: ImportedEntry[] = Object.entries(outLedger).map(([gid, a]) => {
     const dist = a.distMi > 0 ? String(a.distMi) : '';
     const time = String(a.timeMin);
     return a.type === 'swim'
       ? { k: 'swim', v1: time, v2: dist, gid }
       : { k: a.type, v1: dist, v2: time, gid };
   });
-  return JSON.stringify([...manual, ...imported]);
+  return { rebuilt: JSON.stringify([...keep, ...imported]), ledger: outLedger };
 }
 
 // ── Daily wellness import (steps, weight, recovery metrics) ──────────────────

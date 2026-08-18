@@ -210,6 +210,52 @@ describe('applyActivity — exercises[] mirroring (calendar visibility)', () => 
   });
 });
 
+describe('applyActivity — manual-duplicate absorption', () => {
+  it('absorbs a hand-logged copy of the same workout and adopts its distance', () => {
+    // The Aug-5 scenario: user manually logged an indoor ride (16mi/80min)
+    // because sync hadn't run; the import arrives later, time-only (80.1min).
+    const existing = { exercises: JSON.stringify([
+      { k: 'lift', n: 'Bench', sets: [{ r: '10', w: '135' }] },
+      { k: 'bike', v1: '16', v2: '80' },       // manual duplicate
+    ]) };
+    const { data } = applyActivity(existing, { type: 'bike', distanceMi: 0, timeMin: 80.1, calories: 400, externalId: 'g5' }, NOW);
+    const ex = JSON.parse(String(data.exercises)) as Array<Record<string, unknown>>;
+    expect(ex).toHaveLength(2);                               // lift + ONE bike (imported)
+    expect(ex.filter(e => e.k === 'bike')).toHaveLength(1);
+    expect(ex.find(e => e.k === 'bike')).toMatchObject({ gid: 'g5', v1: '16' }); // distance adopted
+    expect(data.bikeDist).toBe(16);                            // aggregates use it
+    expect(data.garminBikeKcal).toBe(400);
+  });
+
+  it('a clearly different manual workout of the same type is kept', () => {
+    const existing = { exercises: JSON.stringify([{ k: 'run', v1: '2', v2: '18' }]) };
+    const { data } = applyActivity(existing, { type: 'run', distanceMi: 6, timeMin: 55, externalId: 'g6' }, NOW);
+    const ex = JSON.parse(String(data.exercises)) as Array<Record<string, unknown>>;
+    expect(ex).toHaveLength(2);                                // both survive
+    expect(ex.find(e => !e.gid)).toMatchObject({ k: 'run', v2: '18' });
+  });
+
+  it('absorbs at most one manual entry per imported activity', () => {
+    const existing = { exercises: JSON.stringify([
+      { k: 'swim', v1: '20', v2: '0.5' },
+      { k: 'swim', v1: '21', v2: '0.5' },
+    ]) };
+    const { data } = applyActivity(existing, { type: 'swim', distanceMi: 0.5, timeMin: 20, externalId: 'g7' }, NOW);
+    const ex = JSON.parse(String(data.exercises)) as Array<Record<string, unknown>>;
+    expect(ex.filter(e => e.k === 'swim')).toHaveLength(2);    // one absorbed, one kept
+    expect(ex.filter(e => e.k === 'swim' && e.gid)).toHaveLength(1);
+  });
+
+  it('a distance-less resend never erases an adopted distance (stable no-op)', () => {
+    const existing = { exercises: JSON.stringify([{ k: 'bike', v1: '16', v2: '80' }]) };
+    const first = applyActivity(existing, { type: 'bike', distanceMi: 0, timeMin: 80.1, calories: 400, externalId: 'g8' }, NOW).data;
+    expect(first.bikeDist).toBe(16);
+    const resend = applyActivity(first, { type: 'bike', distanceMi: 0, timeMin: 80.1, calories: 400, externalId: 'g8' }, NOW);
+    expect(resend.changed).toBe(false);                        // true no-op
+    expect(resend.data.bikeDist).toBe(16);                     // adopted distance stable
+  });
+});
+
 describe('applyActivity — merge safety', () => {
   it('stamps only the touched fields and preserves unrelated same-day data', () => {
     const existing = { weight: '180', foods: '[]', _editedAt: '2026-08-06T06:00:00.000Z' };
