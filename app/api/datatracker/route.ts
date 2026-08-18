@@ -16,7 +16,8 @@ import { authOptions }      from '@/lib/auth';
 import { prisma }           from '@/lib/prisma';
 import { dataTrackerLimit } from '@/lib/ratelimit';
 import { dataTrackerConnectSchema } from '@/lib/validators';
-import { normalizeTrackerUrl, callTracker, TrackerError } from '@/lib/dataTracker';
+import { normalizeTrackerUrl, callTracker, provisionQuePush, TrackerError } from '@/lib/dataTracker';
+import { ensureHealthToken } from '@/lib/healthToken';
 
 async function requireUserId(): Promise<string | null> {
   const session = await getServerSession(authOptions);
@@ -88,7 +89,16 @@ export async function POST(req: Request): Promise<NextResponse> {
     create: { userId, baseUrl, secret: parsed.data.secret },
     update: { baseUrl, secret: parsed.data.secret },
   });
-  return NextResponse.json({ ok: true, connected: true, baseUrl });
+
+  // Auto-provision the push side: hand the tracker this user's health token so
+  // its syncs push cardio + wellness into Que with ZERO manual env-var setup.
+  // Best-effort — an older tracker without /api/que-config just skips this and
+  // the panel's health warning tells the user to configure manually.
+  const token = await ensureHealthToken(userId);
+  const activityUrl = `${process.env.NEXTAUTH_URL ?? ''}/api/health/activity`;
+  const pushProvisioned = await provisionQuePush(baseUrl, parsed.data.secret, activityUrl, token);
+
+  return NextResponse.json({ ok: true, connected: true, baseUrl, pushProvisioned });
 }
 
 export async function DELETE(): Promise<NextResponse> {

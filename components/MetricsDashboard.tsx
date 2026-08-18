@@ -254,6 +254,22 @@ function StepSyncPanel() {
                     <code className="flex-1 min-w-0 truncate font-mono text-[9px] text-[var(--ink-1)] bg-[var(--bg-3)] rounded px-2 py-1.5">{sync.token}</code>
                     <button type="button" onClick={() => copy(sync.token, 'token')} className="que-btn-ghost px-2 flex-shrink-0 text-[8px]">{copied === 'token' ? '✓' : 'Token'}</button>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!confirm('Regenerate your sync token? Anything using the old token stops working — a connected data_tracker is re-provisioned automatically, but a manual iOS Shortcut / Tasker setup needs the new token pasted in.')) return;
+                      fetch('/api/health/token', { method: 'POST' })
+                        .then(r => (r.ok ? r.json() : Promise.reject()))
+                        .then((d: { token: string; endpoint: string; activityEndpoint?: string; trackerReprovisioned?: boolean }) => {
+                          setSync({ token: d.token, stepsEndpoint: d.endpoint, activityEndpoint: d.activityEndpoint ?? '' });
+                          setSyncErr(false);
+                        })
+                        .catch(() => setSyncErr(true));
+                    }}
+                    className="font-mono text-[8px] uppercase tracking-[0.5px] text-[var(--ink-3)] hover:text-[var(--warn)] transition-colors"
+                  >
+                    Regenerate token…
+                  </button>
                 </div>
 
                 <p className="font-mono text-[8px] text-[var(--ink-3)] leading-relaxed tracking-[0.3px]">

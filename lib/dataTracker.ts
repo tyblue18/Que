@@ -66,6 +66,8 @@ export function normalizeTrackerUrl(input: string): string {
 interface CallOpts {
   method?: 'GET' | 'POST';
   timeoutMs?: number;
+  /** JSON body for POSTs. */
+  body?: unknown;
 }
 
 /**
@@ -77,7 +79,7 @@ export async function callTracker(
   baseUrl: string,
   secret: string,
   path: string,
-  { method = 'GET', timeoutMs = 20_000 }: CallOpts = {},
+  { method = 'GET', timeoutMs = 20_000, body }: CallOpts = {},
 ): Promise<unknown> {
   const url = normalizeTrackerUrl(baseUrl) + path;
   const ctrl = new AbortController();
@@ -86,7 +88,11 @@ export async function callTracker(
   try {
     res = await fetch(url, {
       method,
-      headers: { Authorization: `Bearer ${secret}` },
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       signal: ctrl.signal,
       redirect: 'error',
       cache: 'no-store',
@@ -106,4 +112,25 @@ export async function callTracker(
   if (!res.ok) throw new TrackerError(`Your data_tracker returned an error (${res.status}).`, 502);
   try { return await res.json(); }
   catch { throw new TrackerError('Your data_tracker returned an unreadable response.', 502); }
+}
+
+/**
+ * Hand the user's Que push credentials to their tracker so it can push cardio +
+ * wellness WITHOUT the user copying tokens into Vercel env vars (the setup step
+ * that has cost the most debugging). Best-effort: an older tracker without the
+ * /api/que-config endpoint just 404s — the caller treats false as "configure
+ * manually" (the panel's health warning covers it).
+ */
+export async function provisionQuePush(
+  baseUrl: string,
+  secret: string,
+  activityUrl: string,
+  token: string,
+): Promise<boolean> {
+  try {
+    await callTracker(baseUrl, secret, '/api/que-config', {
+      method: 'POST', timeoutMs: 10_000, body: { activityUrl, token },
+    });
+    return true;
+  } catch { return false; }
 }

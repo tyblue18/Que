@@ -229,6 +229,17 @@ export const healthWellnessSchema = z.object({
   { message: 'At least one wellness metric is required' },
 );
 
+// ── /api/health/batch POST (one request for a whole sync's worth of data) ──────
+// Replaces N per-item requests during backfills/syncs. Bounds are generous but
+// finite: a year of history fits in one call without opening an abuse vector.
+export const healthBatchSchema = z.object({
+  activities: z.array(healthActivitySchema).max(500).optional(),
+  wellness:   z.array(healthWellnessSchema).max(400).optional(),
+}).refine(
+  d => (d.activities?.length ?? 0) + (d.wellness?.length ?? 0) > 0,
+  { message: 'At least one activity or wellness entry is required' },
+);
+
 // ── /api/datatracker POST (connect a self-hosted Garmin data_tracker) ──────────
 // baseUrl is further validated + SSRF-guarded in lib/dataTracker.normalizeTrackerUrl.
 export const dataTrackerConnectSchema = z.object({
