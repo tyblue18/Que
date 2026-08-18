@@ -488,7 +488,6 @@ function ProfilePanel({ profile, onChange, onOpenPlan, onOpenRunPlan, onOpenLift
         <ProgressPhoto />
 
         <StepSyncPanel />
-        <RecoveryPanel />
         <DataTrackerPanel />
       </div>
     </div>
@@ -1881,6 +1880,11 @@ export default function MetricsDashboard({ openProfileSignal = 0 }: { openProfil
       {profileOpen && <div ref={profileRef}><ProfilePanel profile={profile} onChange={handleProfileChange} onOpenPlan={() => setPlanOpen(true)} onOpenRunPlan={() => setRunPlanOpen(true)} onOpenLiftPlan={() => setLiftPlanOpen(true)} onOpenHistory={() => setHistoryOpen(true)} /></div>}
 
       <CalorieBudgetCard m={m} onOpenProgress={() => setProgressOpen(true)} prFlags={prFlags} />
+
+      {/* Recovery gets prime placement: readiness is a check-every-morning
+          signal, not a settings sub-panel (it used to hide inside the collapsed
+          Athlete Profile section, where nobody found it). */}
+      <RecoveryPanel />
 
       <MaintenanceCard formulaTdee={m.tdee} />
 

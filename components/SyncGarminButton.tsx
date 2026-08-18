@@ -46,8 +46,9 @@ export function SyncGarminButton() {
 
   if (!connected) return null; // only for users who've connected a data_tracker
 
+  // Bare (no wrapper row) — composed with ReadinessChip in the home shell.
   return (
-    <div className="flex items-center gap-2 px-4 md:px-6 pt-3">
+    <>
       <button
         type="button"
         onClick={sync}
@@ -65,6 +66,6 @@ export function SyncGarminButton() {
         {syncing ? 'Syncing…' : 'Sync Garmin'}
       </button>
       {msg && <span className="font-mono text-[9px] text-[var(--ink-3)]">{msg}</span>}
-    </div>
+    </>
   );
 }

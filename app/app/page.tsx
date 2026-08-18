@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic';
 import { Calendar, BarChart2, Layers, Utensils, Users } from 'lucide-react';
 import { AuthHeader }    from '@/components/header';
 import { SyncGarminButton } from '@/components/SyncGarminButton';
+import { ReadinessChip }    from '@/components/ReadinessChip';
 import CalendarScheduler from '@/components/CalendarScheduler';
 import WorkoutLogger     from '@/components/WorkoutLogger';
 import LiftingPlanBuilder from '@/components/lifting/LiftingPlanBuilder';
@@ -75,7 +76,13 @@ export default function WorkoutPage() {
     <RestTimerProvider>
     <div className="app-shell">
       <AuthHeader />
-      <SyncGarminButton />
+      {/* Home strip: readiness at a glance (jumps to Metrics' Recovery card) +
+          the Garmin sync trigger. empty:hidden collapses the row entirely for
+          users with neither a tracker connection nor wellness data. */}
+      <div className="flex items-center gap-2 px-4 md:px-6 pt-3 flex-wrap empty:hidden">
+        <ReadinessChip onOpen={() => setTab('metrics')} />
+        <SyncGarminButton />
+      </div>
       <InviteRedeemer />
       <BadgeCelebration />
       <FunnelTracker />

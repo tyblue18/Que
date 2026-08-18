@@ -60,7 +60,9 @@ const TIER_COPY: Record<ReadinessTier, { label: string; hint: string; color: str
 
 export function RecoveryPanel() {
   const { localDB, todayStr } = useApp();
-  const [open, setOpen] = useState(false);
+  // null = user hasn't toggled → default OPEN whenever there's data to show
+  // (a collapsed-by-default panel is how this feature went unnoticed).
+  const [openState, setOpenState] = useState<boolean | null>(null);
 
   const readiness = useMemo(
     () => computeReadiness(localDB as Record<string, DayRecord>, todayStr),
@@ -96,23 +98,24 @@ export function RecoveryPanel() {
     return { tiles, sleepMin, hasAny };
   }, [localDB]);
 
+  const open = openState ?? model.hasAny;
+
   return (
-    <div className="mt-3">
-      <div className="rounded border border-[var(--line)] bg-[var(--bg-2)] p-3">
+    <div className="que-card mb-4">
+      <div className="p-5">
         <button
           type="button"
-          onClick={() => setOpen(v => !v)}
-          className="w-full flex items-center justify-between font-mono text-[9px] font-bold tracking-[1px] uppercase text-[var(--accent)]"
+          onClick={() => setOpenState(!open)}
+          className="w-full flex items-center justify-between"
         >
-          <span>
-            Recovery
+          <h2 className="que-section-label"><span className="dot" />RECOVERY
             {readiness.available && (
-              <span className="ml-1.5 normal-case tracking-normal font-bold" style={{ color: TIER_COPY[readiness.tier].color }}>
+              <span className="ml-2 normal-case tracking-normal font-mono text-[11px] font-bold" style={{ color: TIER_COPY[readiness.tier].color }}>
                 ● {readiness.score}/100
               </span>
             )}
-          </span>
-          <span className="text-[var(--ink-3)]">{open ? '–' : '+'}</span>
+          </h2>
+          <span className="font-mono text-[11px] text-[var(--ink-3)]">{open ? '–' : '+'}</span>
         </button>
 
         {open && (
