@@ -1638,6 +1638,7 @@ export default function MetricsDashboard({ openProfileSignal = 0 }: { openProfil
       bikeDist:   String(rec.bikeDist ?? 0),
       bikeTime:   String(rec.bikeTime ?? 0),
       swimTime:   String(rec.swimTime ?? 0),
+      swimDist:   String(rec.swimDist ?? 0),
       // Measured Garmin calories supersede the estimate (fixes the cardio card
       // + burn breakdown reading low, matching the calorie budget).
       garminKcal:     String(rec.garminKcal     ?? 0),

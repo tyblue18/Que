@@ -15,7 +15,7 @@
 // route handling). The activate handler purges every cache whose name
 // doesn't match, so a deploy with a fresh version guarantees no stale
 // entries linger. JS/CSS hashes already invalidate via network-first below.
-const CACHE = 'que-v20';
+const CACHE = 'que-v21';
 
 // Only list assets that definitely exist. NOTE: '/index.html' was removed —
 // it existed under the old static export (output:'export') but 404s on the

@@ -466,6 +466,7 @@ export default function CalorieTracker() {
     bikeDist:   String(activeRec.bikeDist ?? '0'),
     bikeTime:   String(activeRec.bikeTime ?? '0'),
     swimTime:   String(activeRec.swimTime ?? '0'),
+    swimDist:   String(activeRec.swimDist ?? '0'),
     // Measured active calories from a linked Garmin sync — supersedes the estimate.
     garminKcal:     String(activeRec.garminKcal     ?? '0'),
     garminRunKcal:  String(activeRec.garminRunKcal  ?? '0'),

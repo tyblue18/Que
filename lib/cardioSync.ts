@@ -75,7 +75,7 @@ export function deriveCardioFields(
     steps: '0',
     runDist: String(runDist), runTime: String(runTime),
     bikeDist: String(bikeDist), bikeTime: String(bikeTime),
-    swimTime: String(swimTime),
+    swimTime: String(swimTime), swimDist: String(swimDist),
     garminKcal:     String(measured?.garminKcal     ?? '0'),
     garminRunKcal:  String(measured?.garminRunKcal  ?? '0'),
     garminBikeKcal: String(measured?.garminBikeKcal ?? '0'),

@@ -31,6 +31,9 @@ export function fmt(n: number): string { return Math.round(n).toLocaleString(); 
 export interface CardioFields {
   steps: string; runDist: string; runTime: string;
   bikeDist: string; bikeTime: string; swimTime: string;
+  /** Swim distance in canonical miles. Optional (older callers omit it) — when
+   *  present the swim burn uses a PACE-derived MET instead of the flat average. */
+  swimDist?: string;
   /** Measured ACTIVE calories from a linked Garmin sync (sum across the day's
    *  cardio). When > 0 it supersedes the distance/time estimate — Garmin's HR/
    *  power number captures grade, wind, and effort the estimate can't. */
@@ -428,6 +431,37 @@ export function cyclingKcalFlat(speedMph: number, minutes: number, riderKg: numb
   return (watts * minutes * 60) / GROSS_EFF / 4184;  // J → kcal metabolic
 }
 
+/**
+ * Swim MET from pace. Real swim METs span ~4.8 (easy drills) to ~9.8+ (fast
+ * freestyle) — the old flat 7.0 overcharged easy pool time and undercharged
+ * hard sets, since swim pace tracks effort nearly as well as run pace does.
+ * Anchors follow the Compendium's freestyle bands, interpolated linearly on
+ * speed (yd/min) so there are no cliff jumps between bands. Time-only swims
+ * (no distance) fall back to the 7.0 moderate average. [estimate]
+ */
+const SWIM_MET_ANCHORS: Array<[ydPerMin: number, met: number]> = [
+  [30, 4.8],   // > 3:20 /100yd — easy / drills / breaks
+  [45, 5.8],   // ~2:13 /100yd — light steady freestyle
+  [55, 7.0],   // ~1:49 /100yd — moderate
+  [65, 8.3],   // ~1:32 /100yd — vigorous
+  [75, 9.8],   // < 1:20 /100yd — fast
+];
+
+export function swimMet(distMi: number, timeMin: number): number {
+  if (!(distMi > 0) || !(timeMin > 0)) return 7.0; // time-only → moderate average
+  const ydPerMin = (distMi * 1760) / timeMin;
+  const a = SWIM_MET_ANCHORS;
+  if (ydPerMin <= a[0][0]) return a[0][1];
+  if (ydPerMin >= a[a.length - 1][0]) return a[a.length - 1][1];
+  for (let i = 1; i < a.length; i++) {
+    if (ydPerMin <= a[i][0]) {
+      const [x0, y0] = a[i - 1], [x1, y1] = a[i];
+      return y0 + ((ydPerMin - x0) / (x1 - x0)) * (y1 - y0);
+    }
+  }
+  return 7.0;
+}
+
 export function computeCardioBurn(profile: UserProfile, cardio: CardioFields): CardioBurn {
   const wLbs = parseNum(profile.weight) || 180;
   const hIn  = parseNum(profile.height) || 70;
@@ -473,7 +507,8 @@ export function computeCardioBurn(profile: UserProfile, cardio: CardioFields): C
   }
 
   const sMin     = parseNum(cardio.swimTime);
-  let   swimBurn = sMin > 0 ? netOf(7.0 * 3.5 * kg / 200 * sMin, sMin) : 0;
+  const sMi      = parseNum(cardio.swimDist ?? '0');
+  let   swimBurn = sMin > 0 ? netOf(swimMet(sMi, sMin) * 3.5 * kg / 200 * sMin, sMin) : 0;
 
   // Measured override: a linked Garmin sync provides real ACTIVE calories (HR/
   // power based), which capture grade, wind, indoor effort — everything the

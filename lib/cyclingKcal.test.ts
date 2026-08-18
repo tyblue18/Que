@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { cyclingKcalFlat, computeCardioBurn } from '@/lib/metricsTypes';
+import { cyclingKcalFlat, computeCardioBurn, swimMet } from '@/lib/metricsTypes';
 import type { UserProfile } from '@/lib/AppContext';
 
 const P80: UserProfile = {
@@ -110,5 +110,39 @@ describe('computeCardioBurn — measured Garmin calories override', () => {
     expect(m.bikeBurn).toBe(184);           // measured wins despite no distance
     expect(m.runBurn).toBeGreaterThan(0);   // run still estimated
     expect(m.activityBurn).toBe(m.runBurn + 184);
+  });
+});
+
+describe('swimMet — pace-derived swim intensity', () => {
+  it('falls back to the 7.0 moderate average without a distance', () => {
+    expect(swimMet(0, 30)).toBe(7.0);
+    expect(swimMet(0.5, 0)).toBe(7.0);
+  });
+
+  it('is monotonic in pace and clamped at the anchor ends', () => {
+    const easy = swimMet(0.5, 45);   // 880yd in 45min ≈ 19.6 yd/min → clamps to 4.8
+    const mod  = swimMet(0.625, 20); // exactly 55 yd/min (~1:49/100yd) → 7.0 anchor
+    const fast = swimMet(1.0, 20);   // 88 yd/min → clamps to 9.8
+    expect(easy).toBe(4.8);
+    expect(mod).toBeCloseTo(7.0, 1);
+    expect(fast).toBe(9.8);
+    expect(mod).toBeGreaterThan(easy);
+    expect(fast).toBeGreaterThan(mod);
+  });
+
+  it('interpolates between anchors (no cliff jumps)', () => {
+    const met = swimMet(0.568, 20); // ≈ 50 yd/min — halfway between 45 and 55 anchors
+    expect(met).toBeGreaterThan(5.8);
+    expect(met).toBeLessThan(7.0);
+  });
+
+  it('an easy swim now costs less than the old flat model, a hard one more', () => {
+    const P = P80;
+    const base = { steps: '0', runDist: '0', runTime: '0', bikeDist: '0', bikeTime: '0' };
+    const easy = computeCardioBurn(P, { ...base, swimTime: '45', swimDist: '0.5' }).swimBurn;
+    const flat = computeCardioBurn(P, { ...base, swimTime: '45' }).swimBurn; // no dist → 7.0
+    const hard = computeCardioBurn(P, { ...base, swimTime: '45', swimDist: '1.7' }).swimBurn;
+    expect(easy).toBeLessThan(flat);
+    expect(hard).toBeGreaterThan(flat);
   });
 });
