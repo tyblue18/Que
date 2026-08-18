@@ -270,8 +270,9 @@ export default function LiftingPlanBuilder({ bare = false }: { bare?: boolean } 
             <span className="font-mono text-[10px] font-bold text-[var(--warn)] tracking-[0.3px]">You may be due for a deload</span>
             <p className="font-mono text-[8px] text-[var(--ink-3)] leading-relaxed tracking-[0.3px] mt-1">
               {signal.missed} lift{signal.missed === 1 ? '' : 's'} ({signal.lifts.slice(0, 3).join(', ')}{signal.lifts.length > 3 ? '…' : ''}) missed their rep range this week
-              {signal.lowFeel && signal.avgFeel != null ? `, and sessions are feeling rough (avg feel ${signal.avgFeel.toFixed(1)}/10)` : ''}.
-              {signal.lowFeel ? ' Two fatigue signals together' : ' Persistent regression'} suggests you’re at your recoverable ceiling — consider an early deload (halve your sets for a week), then start a fresh block.
+              {signal.lowFeel && signal.avgFeel != null ? `, sessions are feeling rough (avg feel ${signal.avgFeel.toFixed(1)}/10)` : ''}
+              {signal.lowRecovery && signal.recoveryScore != null ? `, and your Garmin recovery is low (readiness ${signal.recoveryScore}/100)` : ''}.
+              {signal.lowFeel || signal.lowRecovery ? ' Multiple fatigue signals together' : ' Persistent regression'} suggests you’re at your recoverable ceiling — consider an early deload (halve your sets for a week), then start a fresh block.
             </p>
           </div>
         </div>

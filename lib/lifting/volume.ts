@@ -26,6 +26,7 @@
 import type { LiftingProgram, ProgramDay, LiftGoal } from '@/lib/lifting/program';
 import { computeWeeklyVolume } from '@/lib/lifting/program';
 import { progressionAdvice, type LoggedDay } from '@/lib/lifting/progression';
+import { computeReadiness } from '@/lib/readiness';
 
 export const DEFAULT_MESO_WEEKS = 5; // 4 ramp weeks + 1 deload
 
@@ -137,6 +138,10 @@ export interface DeloadSignal {
   lifts:      string[];     // which ones (for the message)
   lowFeel:    boolean;      // 2nd marker: recent sessions felt rough (low sessFeel)
   avgFeel:    number | null;// mean recent sessFeel (null = none logged)
+  /** 3rd marker: OBJECTIVE recovery (imported Garmin HRV/RHR/sleep) is low —
+   *  lib/readiness tier 'low'. false when no wellness data is linked. */
+  lowRecovery: boolean;
+  recoveryScore: number | null; // 0–100 readiness score (null = no wellness data)
 }
 
 // A recent mean sessFeel at/below this is the "subjective fatigue" marker.
@@ -153,9 +158,14 @@ const DELOAD_FEEL_THRESHOLD = 4;
  *   2. Subjective fatigue — recent mean `sessFeel` (the check-in number) at or
  *      below threshold.
  *
+ *   3. Objective recovery — when Garmin wellness is linked, lib/readiness's
+ *      daily assessment (HRV/resting-HR vs the athlete's own baseline, sleep,
+ *      body battery) at tier 'low'. The objective twin of marker 2.
+ *
  * Fires when regression is strong on its own (3+ lifts) OR when moderate
- * regression (2 lifts) is CORROBORATED by low feel — so a single rough-feeling
- * week without performance loss won't cry wolf, and vice versa.
+ * regression (2 lifts) is CORROBORATED by low feel OR low objective recovery —
+ * so a single rough-feeling week without performance loss won't cry wolf, and
+ * vice versa. Recovery data alone (without regression) never triggers it.
  *
  * ⚠️ The counts/threshold ("2 lifts", "7-day window", feel ≤ 4) are tuned
  * [heuristic]s, not literature values — the knobs to turn for sensitivity.
@@ -186,11 +196,17 @@ export function deloadSignal(
   const avgFeel = feels.length ? feels.reduce((a, b) => a + b, 0) / feels.length : null;
   const lowFeel = avgFeel != null && avgFeel <= DELOAD_FEEL_THRESHOLD;
 
+  // Marker 3: objective recovery from imported Garmin wellness (no-op when the
+  // user has no linked data — computeReadiness reports available:false).
+  const readiness = computeReadiness(localDB, todayStr);
+  const lowRecovery = readiness.available && readiness.tier === 'low';
+  const recoveryScore = readiness.available ? readiness.score : null;
+
   const strongRegression   = missed.length >= 3;
   const moderateRegression = missed.length >= 2;
-  const due = strongRegression || (moderateRegression && lowFeel);
+  const due = strongRegression || (moderateRegression && (lowFeel || lowRecovery));
 
-  return { due, missed: missed.length, lifts: missed, lowFeel, avgFeel };
+  return { due, missed: missed.length, lifts: missed, lowFeel, avgFeel, lowRecovery, recoveryScore };
 }
 
 function addDays(dateStr: string, delta: number): string {

@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { useApp, type DayRecord } from '@/lib/AppContext';
 import { fmtDuration } from '@/lib/units';
 import { toDateStr } from '@/lib/metricsTypes';
+import { computeReadiness, type ReadinessTier } from '@/lib/readiness';
 
 /**
  * Recovery — daily wellness from a linked Garmin sync (resting HR, overnight
@@ -51,9 +52,20 @@ function avg(vals: number[]): number | null {
   return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null;
 }
 
+const TIER_COPY: Record<ReadinessTier, { label: string; hint: string; color: string }> = {
+  ready:    { label: 'Ready to train',  hint: 'Recovery markers look good — train as planned.', color: 'var(--positive)' },
+  moderate: { label: 'Train, but easy on intensity', hint: 'Some recovery markers are off — a normal session is fine, save the max efforts.', color: 'var(--warn)' },
+  low:      { label: 'Low recovery',    hint: 'Multiple markers are down — consider an easy day or extra rest.', color: 'var(--danger)' },
+};
+
 export function RecoveryPanel() {
-  const { localDB } = useApp();
+  const { localDB, todayStr } = useApp();
   const [open, setOpen] = useState(false);
+
+  const readiness = useMemo(
+    () => computeReadiness(localDB as Record<string, DayRecord>, todayStr),
+    [localDB, todayStr],
+  );
 
   const model = useMemo(() => {
     const days = lastDates(14).map(ds => ({ ds, rec: (localDB[ds] ?? {}) as DayRecord }));
@@ -94,12 +106,11 @@ export function RecoveryPanel() {
         >
           <span>
             Recovery
-            {model.hasAny && (() => {
-              const hrv = model.tiles.find(t => t.key === 'hrv');
-              return hrv?.latest
-                ? <span className="ml-1.5 text-[var(--ink-2)] normal-case tracking-normal">HRV {hrv.latest.v}ms</span>
-                : null;
-            })()}
+            {readiness.available && (
+              <span className="ml-1.5 normal-case tracking-normal font-bold" style={{ color: TIER_COPY[readiness.tier].color }}>
+                ● {readiness.score}/100
+              </span>
+            )}
           </span>
           <span className="text-[var(--ink-3)]">{open ? '–' : '+'}</span>
         </button>
@@ -113,6 +124,24 @@ export function RecoveryPanel() {
               </p>
             ) : (
               <>
+                {/* Today's readiness — the actionable summary of the tiles below. */}
+                {readiness.available && (
+                  <div
+                    className="rounded border p-2.5"
+                    style={{ borderColor: `color-mix(in srgb, ${TIER_COPY[readiness.tier].color} 45%, transparent)`,
+                             background:  `color-mix(in srgb, ${TIER_COPY[readiness.tier].color} 9%, transparent)` }}
+                  >
+                    <p className="font-mono text-[10px] font-bold tracking-[0.5px]" style={{ color: TIER_COPY[readiness.tier].color }}>
+                      {TIER_COPY[readiness.tier].label} · {readiness.score}/100
+                    </p>
+                    <p className="font-mono text-[8px] text-[var(--ink-2)] leading-relaxed tracking-[0.3px] mt-0.5">
+                      {readiness.reasons.length
+                        ? readiness.reasons.join(' · ')
+                        : TIER_COPY[readiness.tier].hint}
+                    </p>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-1.5">
                   {model.tiles.map(t => (
                     <div key={t.key} className="rounded border border-[var(--line)] bg-[var(--bg-3)] p-2.5">

@@ -31,7 +31,13 @@ export interface LoggedExercise {
   // legacy single-set shape
   s?: string; r?: string; w?: string;
 }
-export interface LoggedDay { exercises?: string; sessFeel?: number }
+export interface LoggedDay {
+  exercises?: string;
+  sessFeel?: number;
+  // Imported Garmin wellness (lib/healthActivity applyWellness) — read by the
+  // objective-recovery marker in the deload trigger (lib/readiness).
+  hrv?: number; restingHr?: number; sleepScore?: number; sleepMin?: number; bodyBattery?: number;
+}
 
 // 'defer_load' = reps qualified for a load increase, but the last session felt
 // brutal (low sessFeel) so we hold this session and bump next time instead.
