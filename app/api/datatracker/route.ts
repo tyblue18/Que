@@ -33,10 +33,28 @@ export async function GET(): Promise<NextResponse> {
   if (!userId) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   const conn = await prisma.dataTrackerConnection.findUnique({ where: { userId } });
+
+  // Surface the tracker's own health so the panel can explain a dead sync
+  // ("Garmin login expired") instead of failing opaquely. Best-effort: a
+  // health probe failure must not break the status response.
+  let health: { ok: boolean; garminTokens: number; lastActivity: string | null; quePushConfigured: boolean } | null = null;
+  if (conn) {
+    try {
+      const h = await callTracker(conn.baseUrl, conn.secret, '/api/health', { timeoutMs: 8_000 }) as Record<string, unknown>;
+      health = {
+        ok:            h.ok === true && !h.error,
+        garminTokens:  Number(h.garmin_tokens) || 0,
+        lastActivity:  (h.counts as Record<string, unknown> | undefined)?.last_activity as string ?? null,
+        quePushConfigured: h.que_push_configured !== false, // absent on older deploys → assume ok
+      };
+    } catch { health = null; /* unreachable — panel shows its own connectivity error on use */ }
+  }
+
   return NextResponse.json({
     connected:  !!conn,
     baseUrl:    conn?.baseUrl ?? null,
     lastSyncAt: conn?.lastSyncAt ?? null,
+    health,
   });
 }
 

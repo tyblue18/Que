@@ -1440,7 +1440,8 @@ function CalorieHistoryCard({ streak, avgNet, days, cutting }: {
 // SUB-COMPONENT — TrendsCard
 // ─────────────────────────────────────────────────────────────────────────────
 
-type TrendKey = 'weight' | 'burn' | 'budget' | 'runDist' | 'bikeDist' | 'swimTime' | 'sessRating' | 'sessFeel';
+type TrendKey = 'weight' | 'burn' | 'budget' | 'runDist' | 'bikeDist' | 'swimTime' | 'sessRating' | 'sessFeel'
+  | 'hrv' | 'restingHr' | 'sleepScore';
 
 function TrendsCard() {
   const { localDB } = useApp();
@@ -1457,6 +1458,10 @@ function TrendsCard() {
     swimTime: { label: 'SWIM',   color: '#34D399', unit: ' min'  },
     sessRating: { label: 'RATING', color: '#FFD23F', unit: ' /10' },
     sessFeel:   { label: 'FEEL',   color: '#F472B6', unit: ' /10' },
+    // Recovery metrics from the Garmin wellness import (lib/healthActivity).
+    hrv:        { label: 'HRV',    color: '#38BDF8', unit: ' ms'  },
+    restingHr:  { label: 'RHR',    color: '#FB923C', unit: ' bpm' },
+    sleepScore: { label: 'SLEEP',  color: '#C084FC', unit: ' /100' },
   };
 
   useEffect(() => {
@@ -1489,6 +1494,9 @@ function TrendsCard() {
       if (activeTab === 'swimTime') return parseFloat(String(rec?.swimTime ?? '0')) || 0;
       if (activeTab === 'sessRating') return Number(rec?.sessRating) || 0;
       if (activeTab === 'sessFeel')   return Number(rec?.sessFeel)   || 0;
+      if (activeTab === 'hrv')        return Number(rec?.hrv)        || 0;
+      if (activeTab === 'restingHr')  return Number(rec?.restingHr)  || 0;
+      if (activeTab === 'sleepScore') return Number(rec?.sleepScore) || 0;
       return Number(rec?.budget) || 0;
     });
     const { color } = chartConfig[activeTab];
@@ -1496,10 +1504,14 @@ function TrendsCard() {
       : (activeTab === 'runDist' || activeTab === 'bikeDist') ? ` ${u.distanceUnit}`
       : chartConfig[activeTab].unit;
 
-    const rollingAvg = activeTab === 'weight' ? values.map((_, i) => {
-      const win = values.slice(Math.max(0, i - 6), i + 1).filter(v => v > 0);
-      return win.length > 0 ? win.reduce((s, v) => s + v, 0) / win.length : 0;
-    }) : undefined;
+    // 7-day rolling average for the noisy day-to-day series — weight, and the
+    // recovery metrics where the baseline (not the daily reading) is the signal.
+    const rollingAvg = (activeTab === 'weight' || activeTab === 'hrv' || activeTab === 'restingHr')
+      ? values.map((_, i) => {
+          const win = values.slice(Math.max(0, i - 6), i + 1).filter(v => v > 0);
+          return win.length > 0 ? win.reduce((s, v) => s + v, 0) / win.length : 0;
+        })
+      : undefined;
 
     drawLineChart(canvas, labels, values, color, unit, rollingAvg);
   }, [localDB, activeTab, u]); // eslint-disable-line react-hooks/exhaustive-deps

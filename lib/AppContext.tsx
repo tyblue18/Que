@@ -763,6 +763,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [persistProfile]
   );
 
+  // ── Mirror TODAY's weight into the BMR profile ─────────────────────────────
+  // The manual weigh-in paths (CalorieTracker, MorningWeightPrompt) mirror into
+  // profile.weight at their call sites — but a Garmin-scale weigh-in arrives via
+  // the wellness import and only sets the DAY's weight, so BMR / the calorie
+  // budget slowly drifted from the athlete's real weight. This effect closes the
+  // gap for ANY source: it fires only when today's day-weight VALUE changes
+  // (tracked in a ref), so a manual profile edit sticks unless a newer scale
+  // reading actually lands. Past-day corrections never mirror (today only).
+  const lastMirroredWeightRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isLoaded) return;
+    const w = String(localDB[todayStr]?.weight ?? '');
+    if (!w || !(parseFloat(w) > 0)) return;
+    if (lastMirroredWeightRef.current === w) return;
+    lastMirroredWeightRef.current = w;
+    setProfileState(prev => {
+      if (prev.weight === w) return prev;
+      const payload = { w, h: prev.height, a: prev.age, s: prev.sex, b: prev.deficit, l: prev.activityLevel };
+      try { localStorage.setItem(PROFILE_KEY, JSON.stringify(payload)); } catch { /* quota */ }
+      queueSync({ profile: payload });
+      return { ...prev, weight: w };
+    });
+  }, [isLoaded, localDB, todayStr]);
+
   // Stateless localStorage helpers (getUsage, bumpUsage, getTemplatePool,
   // saveTemplatePool, getWorkoutPresets, saveWorkoutPresets, getLastStreak,
   // saveLastStreak) live in lib/storage.ts — they're imported directly by

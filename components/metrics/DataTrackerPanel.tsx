@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '@/lib/AppContext';
 
 // ── Types (defensive — the tracker snapshot is loosely shaped) ────────────────
-interface Status { connected: boolean; baseUrl: string | null; lastSyncAt: string | null }
+interface TrackerHealth { ok: boolean; garminTokens: number; lastActivity: string | null; quePushConfigured: boolean }
+interface Status { connected: boolean; baseUrl: string | null; lastSyncAt: string | null; health?: TrackerHealth | null }
 type Snapshot = Record<string, unknown>;
 
 const num = (v: unknown): number | null => (typeof v === 'number' && isFinite(v) ? v : null);
@@ -173,6 +174,19 @@ export function DataTrackerPanel() {
                     Disconnect
                   </button>
                 </div>
+
+                {/* Tracker health — explains a dead sync before the user hits it. */}
+                {status.health && (!status.health.ok || status.health.garminTokens === 0 || !status.health.quePushConfigured) && (
+                  <div className="rounded border border-[var(--warn)]/50 bg-[var(--warn)]/10 px-2.5 py-2">
+                    <p className="font-mono text-[9px] text-[var(--warn)] leading-relaxed tracking-[0.3px]">
+                      {status.health.garminTokens === 0
+                        ? <>Your tracker has no Garmin login — run <code className="text-[var(--ink-1)]">python track.py tokens</code> (after a local sync) to seed it, or syncs will fail.</>
+                        : !status.health.quePushConfigured
+                          ? <>Your tracker isn&apos;t configured to push into Que — set QUE_ACTIVITY_URL and QUE_ACTIVITY_TOKEN on its deployment.</>
+                          : <>Your tracker is reporting an error — check its /api/health.</>}
+                    </p>
+                  </div>
+                )}
 
                 <button type="button" onClick={() => syncNow(false)} disabled={syncing}
                   className="que-btn-primary w-full py-2.5 text-[10px] disabled:opacity-50">
